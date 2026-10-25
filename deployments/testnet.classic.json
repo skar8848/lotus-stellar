@@ -1,0 +1,135 @@
+{
+  "network": "testnet",
+  "accounts": {
+    "rwa_issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF",
+    "maker": "GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV",
+    "taker": "GAEC3F4ZKGYV4QPTBKN2TTRNQ5SEUAZRNE7AXFQPB4UWMWC4JYW36SI7",
+    "peg_lp": "GANIQO23R5TLEYAGHCARVGXSLFI4ET27R4TCIOHC7MDQAWZB3LDRCMBH",
+    "blocked_taker": "GCNPUYYI4MGJJ2MTEXYDEFQR5QG5B2L5DSMWCABL24NEOB2IQMNC7R5V"
+  },
+  "tx": {
+    "setup_accounts": {
+      "at": "2026-10-25T18:42:20.574Z",
+      "funded_by": "friendbot"
+    },
+    "issue_rwa": {
+      "issuer_flags": "fb45b34f0deb40af94387f9e28366cf35b50c8a2f99275e670cd081e00e15145",
+      "maker_trust": "cfd94837ed045df848c40232501247299b3b400d46bd04c49cab2fc0e08f7aed",
+      "maker_authorize": "e3a20207fdde1d702bff48ddca07f69504932098b955c51b150f416d41d40694",
+      "taker_trust": "c16fd9f47ca17019ae1a2a89f043bbc5c016b4d975cc237a628196c6d2ec9b51",
+      "taker_authorize": "8b1159ae7dd93e2d0d6e6b95fad2bd4e0979fb537ce86cbff43a32550dd72b92",
+      "blocked_trust": "1011ceaf300aa1a947df92a891758788bf945afdcbad6b22f497d8d308883b31",
+      "mint_maker": "df20475ea2e3ec307e51c72b1559c6cfdcc12280041002998cf43ff4ff39b739"
+    },
+    "mint_receipt": {
+      "maker_faucet": "c4419335e9f0119fb33e9e424bfbb780a0f1b890628aa731f6153420335c2cba",
+      "peg_lp_faucet": "8baee8128cd83fd36de9c90b9e3d0103bb3d4a13f33c77b37ad28c3b9ca6c615",
+      "taker_faucet": "c2513e18cc91e447f6f26e98a13eb715c1236f5eb89b870e722f921dd1b8c895",
+      "blocked_taker_faucet": "db1ba51a712f81475f19b1af8cd0298ef59fed88f19c376fa1a255a3ba12bde4",
+      "maker_trust_receipt": "f63987b7fa7e7b9251cbf34046948693e92d02a517692c607c1f9ad6e9f7af21",
+      "maker_deposit": "2679a8b720b5329459eea54137c55750c361319fbc081b495ba9784f480635f3",
+      "peg_lp_trust_receipt": "80f6a619ca0f10114c5ce72667266940028f17109e7c46704f314ce9a78da7d0",
+      "peg_lp_deposit": "a8f722eb2e2c321eb0f0faa5f50e6360cbf152eb5893e2c3b31593a68aa03de6",
+      "taker_trust_receipt": "b8e8ab13a50113dda255fbb27945536df0bb772acf97d6842169534e7a66b518"
+    },
+    "seed_book": {
+      "peg_book": "1a0f6912ef7d535599d17ea85fa24a39cc0649f4904483b626a38a0ea665a241",
+      "bond_ladder": "96fbbecd3f94b760148c94a0d9efa8527494ca5d1a20d079dac496f1e7bbaafb"
+    },
+    "demo_take": {
+      "path_payment": "6bf2153be4a4ad5e8779accb7f0b7b843e53218cb3be07a4f975f033135660a7",
+      "blocked_path_payment_attempt": "4bde4ef3496a3d9a91b3319c5135d51ba04ef8fca1a311661da68f832a8661b9"
+    },
+    "keeper_distribute": {
+      "last": [
+        "7842f608fa817854c3712a8f8e48f9f7a87940ea0e50b8d59c04a0de4f25f64a"
+      ],
+      "at": "2026-10-25T19:03:54.205Z"
+    }
+  },
+  "horizon": "https://horizon-testnet.stellar.org",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "updated_at": "2026-10-25T19:03:54.206Z",
+  "rwa": {
+    "code": "LBOND",
+    "issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF",
+    "name": "Lotus Bond (simulated tokenized T-bill)",
+    "home_domain": "lotus.fi",
+    "flags": [
+      "AUTH_REQUIRED",
+      "AUTH_REVOCABLE",
+      "AUTH_CLAWBACK_ENABLED"
+    ],
+    "maker_inventory": "1000000",
+    "authorized": [
+      "maker",
+      "taker"
+    ],
+    "unauthorized": [
+      "blocked_taker"
+    ]
+  },
+  "receipt": {
+    "code": "lUSDC",
+    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
+    "sac": "CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV"
+  },
+  "underlying": {
+    "code": "USDC",
+    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+    "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+  },
+  "deposits": {
+    "maker": "100",
+    "peg_lp": "500"
+  },
+  "offers": {
+    "peg": {
+      "sell_receipt": {
+        "offer_id": "931612",
+        "amount": "200",
+        "price": "10005/10000"
+      },
+      "sell_underlying": {
+        "offer_id": "931613",
+        "amount": "200",
+        "price": "10000/9995"
+      }
+    },
+    "ladder": [
+      {
+        "offer_id": "931614",
+        "amount": "100",
+        "price": "0.98"
+      },
+      {
+        "offer_id": "931615",
+        "amount": "100",
+        "price": "0.99"
+      },
+      {
+        "offer_id": "931616",
+        "amount": "100",
+        "price": "1.00"
+      },
+      {
+        "offer_id": "931617",
+        "amount": "100",
+        "price": "1.01"
+      },
+      {
+        "offer_id": "931618",
+        "amount": "100",
+        "price": "1.02"
+      }
+    ]
+  },
+  "demo_take": {
+    "send_amount": "150",
+    "estimated_out": "152.4495327"
+  },
+  "last_distribution": {
+    "total": "4.9999997",
+    "recipients": 3
+  }
+}

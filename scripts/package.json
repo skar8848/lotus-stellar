@@ -1,0 +1,23 @@
+{
+  "name": "lotus-stellar-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Testnet demo scripts for Lotus: yield-bearing receipt token on the Stellar DEX (HackMeridian 2026)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node 01-setup-accounts.mjs",
+    "issue": "node 02-issue-rwa.mjs",
+    "mint": "node 03-mint-receipt.mjs",
+    "seed": "node 04-seed-book.mjs",
+    "take": "node 05-demo-take.mjs",
+    "keeper": "node 06-keeper-distribute.mjs",
+    "yield": "node 07-simulate-yield.mjs",
+    "wait": "node 00-wait-for-contract.mjs"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^17.4.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Rust's output directory
+target
+
+# Local settings
+.soroban
+.stellar
+
+# Demo secrets (S... keys) and node deps
+deployments/*.secrets.json
+deployments/*.tmp
+node_modules/

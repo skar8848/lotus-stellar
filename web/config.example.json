@@ -1,0 +1,30 @@
+{
+  "_comment": "Fallback used when ../deployments/testnet.contract.json and ../deployments/testnet.classic.json are absent. Empty strings mean 'not deployed yet'; the UI shows '—' for anything that depends on them.",
+  "contract": {
+    "network": "testnet",
+    "rpc": "https://soroban-testnet.stellar.org",
+    "horizon": "https://horizon-testnet.stellar.org",
+    "passphrase": "Test SDF Network ; September 2015",
+    "lotus_vault_contract": "",
+    "underlying": {
+      "code": "USDC",
+      "issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "sac": ""
+    },
+    "receipt": {
+      "code": "lUSDC",
+      "issuer": "",
+      "sac": ""
+    },
+    "defindex_vault": "",
+    "blend_pool": "",
+    "accounts": {}
+  },
+  "classic": {
+    "rwa": {
+      "code": "LBOND",
+      "issuer": ""
+    },
+    "accounts": {}
+  }
+}

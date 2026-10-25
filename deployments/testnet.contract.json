@@ -1,0 +1,48 @@
+{
+  "network": "testnet",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "horizon": "https://horizon-testnet.stellar.org",
+  "passphrase": "Test SDF Network ; September 2015",
+  "lotus_vault_contract": "CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6",
+  "wasm_hash": "adfd2361a9751a5fd7d98fc25b1e21e8932f404f9e56d58f9b65084ead97354a",
+  "underlying": {
+    "code": "USDC",
+    "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+    "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+  },
+  "receipt": {
+    "code": "lUSDC",
+    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
+    "sac": "CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV"
+  },
+  "defindex_vault": "CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN",
+  "defindex_strategy": "CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY",
+  "blend_pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+  "accounts": {
+    "admin": "GBP5MOETKFQIYOCQGD676LQTV73MKZVDGNGL44QO2DGMFO7RBI5RAYBW",
+    "keeper": "GD5UIZDBCBFKRESNOXR6SGLZKMU62TT6UWL2MHN546QQJNDUM3IYZZQM",
+    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
+    "smoke_test_user": "GC6ESRSGOI3IOJOUQLMU7A5HH4UKISBBDDXXBDRIFAVRGHIZNRE65STI"
+  },
+  "deploy_txs": {
+    "lotus_vault_deploy": "4f7bfbeb776f3a8a45c924cb73ae868ef12b1177655cef2f976a6ec86aa19233",
+    "receipt_set_admin": "808c27c7d6e28072f52302593d6aed37fec4316127f52a751a434a0b464e199a"
+  },
+  "smoke_test_txs": [
+    "1307e6bf3456549c07752ecef45baea992c7e1ca185cc2eded98fd79b5a4624f",
+    "d1ec09856788d1c97f86c9624f130af0b20c52386cbb021ec73be7f44414f985",
+    "042c1ca78d62fba596bfa078fc09fe515e10e662b1cabca12cba5e31f4201131",
+    "d094e1b6c5dd289bae259cd5ff1f4b4d205c491876ae73d304e43ea9141a8353"
+  ],
+  "smoke_test": {
+    "1307e6bf": "deposit(scratch, 100 USDC) -> 999735775 df shares, 100 lUSDC minted. fee 0.036 XLM",
+    "d1ec0985": "redeem(scratch, 50 lUSDC) -> 499867889 df shares burnt, 49.9999999 USDC paid (pro-rata: position was 1 stroop under supply). fee 0.0024 XLM",
+    "042c1ca7": "transfer 1 USDC scratch -> contract (donation, simulates yield) -> surplus = 1 USDC",
+    "d094e1b6": "distribute([scratch],[1 USDC]) by keeper -> 1 lUSDC minted; over-cap call rejected at simulation with Error(Contract,#6) ExceedsCap"
+  },
+  "amounts": {
+    "decimals": 7,
+    "one_unit_stroops": 10000000
+  },
+  "notes": "Underlying = Blend testnet USDC (USDC:GATALT..., obtained via the Blend testnet faucet https://ewqw4hx7oa.execute-api.us-east-1.amazonaws.com/getAssets?userId=G... with header Origin: https://testnet.blend.capital; returns an issuer-signed tx XDR to co-sign and submit: 1000 USDC + BLND/wETH/wBTC per call). Receipt lUSDC is a classic asset whose SAC admin is the lotus_vault contract; the issuer account GBBBCE5X... is NOT locked (hackathon), so it could still issue lUSDC via classic payments. Classic accounts need a trustline to lUSDC before deposit (stellar tx new change-trust --line lUSDC:GBBBCE5X...). At deploy time the DeFindex USDC vault held all funds idle (strategy allocation 0, invested_amount 0), so deposit/redeem did not touch Blend and cost 0.002-0.04 XLM; when the strategy is active expect ~90-100 XLM per deposit/redeem on testnet (rent). vault_value() can be 1 stroop below supply() right after a deposit because of DeFindex share rounding; redeem then pays strictly pro-rata (1 stroop less)."
+}

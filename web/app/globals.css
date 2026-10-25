@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #ededed;
+  --card: #0a0a0a;
+  --card-2: #101010;
+  --muted: #586878;
+  --muted-fg: #8898a8;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --green: #02c77b;
+  --red: #eb365a;
+  --accent: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-muted: var(--muted);
+  --color-muted-fg: var(--muted-fg);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-green: var(--green);
+  --color-red: var(--red);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-inter), Inter, system-ui, sans-serif;
+  --font-brand: var(--font-audiowide), sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* no native spinners on amount inputs */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.wordmark {
+  font-family: var(--font-brand);
+  letter-spacing: 0.18em;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.field {
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.875rem;
+  color: var(--foreground);
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.field:focus {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.field::placeholder {
+  color: var(--muted);
+}
+.field:disabled {
+  opacity: 0.5;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 6px;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  border: 1px solid var(--border-strong);
+  color: var(--foreground);
+  background: transparent;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  white-space: nowrap;
+}
+.btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+}
+.btn-primary {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
+.btn-primary:hover {
+  background: #e6e6e6;
+  border-color: #e6e6e6;
+}
+.btn-primary:disabled {
+  background: #fff;
+  border-color: #fff;
+}
+.btn-sm {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-fg);
+}
+
+.hairline {
+  border-top: 1px solid var(--border);
+}
+
+/* The wallets-kit modal is a web component; keep it on our palette. */
+.swk-modal,
+swk-modal {
+  --swk-font-family: var(--font-sans);
+}

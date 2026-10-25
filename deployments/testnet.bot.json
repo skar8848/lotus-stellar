@@ -1,0 +1,115 @@
+{
+  "network": "testnet",
+  "accounts": {
+    "mm_a": "GATZCJW4Q3O6DGJIZ5PRF3MBXX7BDEK4PLFQXTN6XSFGWTBO6KTPGUGB",
+    "mm_b": "GARJTMBHMNJCFQO5XFWGGJJAIV36GT6SQTZHIEZU3QD7IWUV5EJLBZZU",
+    "arb": "GAQWKGZ3XGFFU3TF5HKBC3JHY4OF4XSLXSPGXMAKC66POM3JC6PQ26XI"
+  },
+  "setup": {
+    "at": "2026-10-25T21:47:48.592Z",
+    "plan": {
+      "mm_a": {
+        "usdc": 1000,
+        "lusdc": 600,
+        "lbond": 20000,
+        "lbondTrust": true
+      },
+      "mm_b": {
+        "usdc": 1000,
+        "lusdc": 600,
+        "lbond": 20000,
+        "lbondTrust": true
+      },
+      "arb": {
+        "usdc": 1000,
+        "lusdc": 0,
+        "lbond": 0,
+        "lbondTrust": true
+      }
+    },
+    "balances_after_setup": {
+      "mm_a": {
+        "XLM": "9999.8762821",
+        "USDC": "416.9033889",
+        "lUSDC": "600.0000000",
+        "LBOND": "20262.9431206",
+        "lbond_authorized": true,
+        "receipt": "600.0000000"
+      },
+      "mm_b": {
+        "XLM": "9999.9267225",
+        "USDC": "374.5537660",
+        "lUSDC": "600.0000000",
+        "LBOND": "19737.5997000",
+        "lbond_authorized": true,
+        "receipt": "600.0000000"
+      },
+      "arb": {
+        "XLM": "9999.9846347",
+        "USDC": "1007.8747274",
+        "lUSDC": "0.0000000",
+        "LBOND": "0.0000000",
+        "lbond_authorized": true,
+        "receipt": "0.0000000"
+      }
+    },
+    "tx": {
+      "mm_a_trustlines": "5221ab8589c52f0cb14e5577fd7d22798df3ee0c5f4fb825cfa949f056c51c61",
+      "mm_b_trustlines": "e262cb64a4a128ca164e41ad32fd76dc15a06419edf8d0b175d1a2d98b9f15b1",
+      "arb_trustlines": "c773d4273404b8b3aa78861c8567153ca889661f502ffff2d101bd740ab6a643",
+      "lbond_issuer_tx": "16f17c2a4cff90a3f835a6c2234e465a0bab039ac8accbdc29f465b88b0e972d",
+      "mm_b_usdc_trust_reset": "9004971427fbb87971b81b57ef57d4543499ff2d78fe5f8d7b2dba740ca96deb",
+      "mm_b_faucet": "4bf37531e0908bc9afcf6bf56a6b0aa1616044dad5cf4c9a65435c0b9f1b4745",
+      "arb_usdc_trust_reset": "380cc2d0e7e565e0d877a623383ce1a46baa5053ef244b6b934b77d11ccf76c5",
+      "arb_faucet": "361003b24713c2aac4e32f5f9777cd3990a82b4493011670303e1a18e6907ed8",
+      "mm_a_deposit": "64be01b015afd788d9e8839ab4a6625342c1123365d683df21ad7aed95b1376c",
+      "mm_b_deposit": "9748f7fbbe8fef7944cb508bc1b51dc1ea7f43d81c809a6126644b2efe423866",
+      "mm_a_faucet_attempt_without_usdc": "fba110d648c011cbbdfc8103fec24a7ed5cde9d079d75bcd7663c15a21980fde",
+      "mm_b_faucet_attempt_without_usdc": "0dd580e581b0ab8f4827d9ed29ef9c948c72375b839e9974f93879a27d8cbe17",
+      "arb_faucet_attempt_without_usdc": "fcb892f6595358203a30319dbcfb164db079097c0f91e1acb013f6cf199ae93b",
+      "mm_a_usdc_trust_reset": "f2463eb27b1c7edc327bdba7bf19b856364637b999280462ce459274cb345ad1",
+      "mm_a_faucet": "1bdf97ae34e01a17bf8cbebc78b4a63ceb40ea81c80a6a50e47d63dc8d6e960a",
+      "mm_a_redeem_legacy": "d8dae70e8ea2db22a385bfd675c3703d90883e5d838326b45b35fe35144f3c32",
+      "mm_b_redeem_legacy": "fda74cd67182ddd86e1c1ab4f96213c11ed8511f5d3c098e36fa21e9c48ec9d9"
+    },
+    "notes": [
+      "The Blend testnet faucet pays 1,000 USDC only to accounts that have no USDC trustline yet; a second call returns an empty transaction."
+    ]
+  },
+  "state": {
+    "nav": 1.0000016571,
+    "nav_at": "2026-10-25T21:57:24.768Z",
+    "note": "simulated LBOND NAV (1.00 at start, 5% APR accrual); accelerated demo runs do not persist"
+  },
+  "purpose": "Testnet. Market makers (mm_a, mm_b) and an arbitrageur (arb) operated by the Lotus team, trading assets the team issues (LBOND) or mints through lotus_vault (lUSDCb).",
+  "roles": {
+    "mm_a": "market maker: quotes LBOND/lUSDCb (4 levels each side) and the USDC/lUSDCb peg book",
+    "mm_b": "flow generator / taker; also the actor that moves the peg in the stress scenarios",
+    "arb": "arbitrageur: buys lUSDCb under 1 USDC and redeems it, or mints it at par and sells above 1"
+  },
+  "assets": {
+    "USDC": {
+      "code": "USDC",
+      "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56"
+    },
+    "lUSDC": {
+      "code": "lUSDC",
+      "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6"
+    },
+    "LBOND": {
+      "code": "LBOND",
+      "issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF"
+    },
+    "receipt": {
+      "code": "lUSDCb",
+      "issuer": "GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO"
+    }
+  },
+  "lotus_vault_contract": "CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG",
+  "updated_at": "2026-10-25T21:57:24.768Z",
+  "legacy_receipt": {
+    "code": "lUSDC",
+    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
+    "contract": "CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6"
+  }
+}

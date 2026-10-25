@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { explorerTx } from "./explorer";
 import type { TxStage } from "./stellar";
 
 export function errMsg(e: unknown): string {
@@ -75,31 +77,48 @@ export type TxState =
   | { stage: "idle" }
   | { stage: TxStage; note?: string }
   | { stage: "error"; error: string }
-  | { stage: "success"; hash: string; result?: unknown; note?: string };
+  | { stage: "success"; hash: string; hashes?: string[]; result?: unknown; note?: string };
 
 export type TxRunner = {
   state: TxState;
   running: boolean;
   run: (
-    fn: (onStage: (s: TxStage, note?: string) => void) => Promise<{ hash: string; result?: unknown; note?: string }>,
-  ) => Promise<{ hash: string; result?: unknown } | null>;
+    fn: (
+      onStage: (s: TxStage, note?: string) => void,
+    ) => Promise<{ hash: string; hashes?: string[]; result?: unknown; note?: string }>,
+  ) => Promise<{ hash: string; hashes?: string[]; result?: unknown } | null>;
   reset: () => void;
 };
 
-/** Track a multi-step transaction flow for a button + status line. */
-export function useTx(): TxRunner {
+/**
+ * Track a multi-step transaction flow for a button + status line. With a `label`, success and
+ * failure also raise a toast (success carries a "View tx" explorer action).
+ */
+export function useTx(label?: string): TxRunner {
   const [state, setState] = useState<TxState>({ stage: "idle" });
-  const run = useCallback<TxRunner["run"]>(async (fn) => {
-    setState({ stage: "building" });
-    try {
-      const r = await fn((s, note) => setState({ stage: s, note }));
-      setState({ stage: "success", hash: r.hash, result: r.result, note: r.note });
-      return r;
-    } catch (e) {
-      setState({ stage: "error", error: errMsg(e) });
-      return null;
-    }
-  }, []);
+  const run = useCallback<TxRunner["run"]>(
+    async (fn) => {
+      setState({ stage: "building" });
+      try {
+        const r = await fn((s, note) => setState({ stage: s, note }));
+        setState({ stage: "success", hash: r.hash, hashes: r.hashes, result: r.result, note: r.note });
+        if (label) {
+          toast.success(`${label} confirmed`, {
+            description: r.note,
+            // a locally simulated action has no hash: no explorer link
+            action: r.hash ? { label: "View tx", onClick: () => window.open(explorerTx(r.hash), "_blank", "noopener,noreferrer") } : undefined,
+          });
+        }
+        return r;
+      } catch (e) {
+        const msg = errMsg(e);
+        setState({ stage: "error", error: msg });
+        if (label) toast.error(`${label} failed`, { description: msg.length > 180 ? msg.slice(0, 180) + "…" : msg });
+        return null;
+      }
+    },
+    [label],
+  );
   const reset = useCallback(() => setState({ stage: "idle" }), []);
   const running = !["idle", "error", "success"].includes(state.stage);
   return { state, running, run, reset };

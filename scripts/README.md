@@ -115,7 +115,7 @@ Scripts 03 to 07 print all of these links as they run. The patterns:
 
 ## Notes and gotchas
 
-- **Fees.** Soroban calls that touch Blend/DeFindex cost ~90-100 XLM on testnet. The invoke helper
+- **Fees.** Soroban calls that touch Blend/DeFindex cost 0.0015 to 0.14 XLM on testnet in later measurements (an early ~90-100 XLM reading on a PaltaLabs vault did not reproduce). The invoke helper
   simulates, then bumps the resource fee by 25% (the refundable part comes back) and uses a 0.01 XLM
   inclusion fee. Keep >= 2,000 XLM on `maker`, `peg_lp` and `keeper`.
 - **USDC underlying.** `testnet.contract.json` points at Blend testnet USDC

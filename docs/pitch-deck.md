@@ -46,7 +46,7 @@ Speaker note: lUSDC is a dollar that earns, in a form the orderbook understands.
 - An unauthorized taker tries the same trade. LBOND is AUTH_REQUIRED, so the transaction fails at the protocol level.
 - The keeper distributes. The issuer's lUSDC proceeds grow while its remaining asks stay open, and the peg provider earns on lUSDC committed to an open offer.
 
-Speaker note: Five steps, all verifiable on stellar.expert and Horizon. The last one is the point: the yield lands on balances that are committed to open orders. On testnet the accrual is simulated, because the DeFindex testnet vault keeps deposits idle.
+Speaker note: Five steps, all verifiable on stellar.expert and Horizon. The last one is the point: the yield lands on balances that are committed to open orders. The interest is real Blend interest on testnet, about 6.9 percent APR observed over a 34 minute window; the rate follows testnet utilization and is not a forecast.
 
 ---
 
@@ -111,7 +111,7 @@ Speaker note: The order is deliberate: remove the trusted keeper first, then wid
 ## Slide 10. The ask
 
 - Introductions: one RWA issuer on Stellar for a pilot, and DeFindex for a mainnet vault path.
-- Technical review: core developers on the fee and rent profile of Blend-touching operations (about 100 XLM per transaction on testnet).
+- Technical review: core developers and DeFindex on fee and rent profile on mainnet (testnet Blend-touching calls cost 0.0015 to 0.14 XLM; mainnet is unmeasured).
 - Funding: an SCF build award to reach audit and mainnet.
 - Security: audit scoping with OpenZeppelin's Stellar practice.
 

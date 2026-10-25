@@ -12,8 +12,8 @@ Accounts and state (names as in `scripts/`, created by `npm run setup`):
 - `taker`: funded, trustlines to USDC and LBOND; LBOND trustline authorized. Holds only USDC.
 - `blocked_taker`: funded, trustline to USDC and LBOND, LBOND trustline not authorized. Holds USDC.
 - `peg_lp`: seeds the USDC/lUSDC peg book at 1:1 (`npm run seed`).
-- Keeper account funded. Fees are small today (0.002 to 0.04 XLM per contract call) because the DeFindex testnet vault keeps deposits idle; expect around 100 XLM per call if its Blend strategy becomes active.
-- Yield to show: the DeFindex testnet USDC vault currently keeps deposits idle (strategy allocation 0), so no Blend interest accrues on testnet and `surplus()` stays at 0 on its own. Always run `npm run yield` before the distribution step: it sends USDC to the contract, which raises `surplus()` exactly as accrued interest would. Say on camera that the accrual is simulated. Do not present it as real yield.
+- Keeper account funded. Fees are small: 0.0015 to 0.14 XLM per contract call on testnet, including the calls that touch Blend.
+- Yield to show: the active deployment is Lotus v2 (`lUSDCb`), backed by our own DeFindex vault seeded into Blend, so interest accrues for real. Deposit as early as possible before recording so `surplus()` has visible digits; the dry run `node 06-keeper-distribute.mjs --dry-run` shows what a distribution would pay. `npm run yield` (a USDC transfer to the contract) is only a fallback lever and, if used, must be announced on camera as a top-up.
 
 Browser tabs, in order:
 
@@ -61,11 +61,11 @@ Say: "LBOND is issued with authorization required and clawback enabled. This sec
 
 ### 2:05 - 2:40. Keeper distributes; the maker earns while offers stay open
 
-On screen: the maker's stellar.expert page, lUSDC balance before (the lUSDC it received from the fills). Terminal: `npm run yield`, then `npm run keeper`. Show its output: the surplus read from the contract, each holder's cap and the amount minted, including `peg_lp`, whose lUSDC is committed to its open ask. Refresh the maker's account page: the lUSDC balance has grown; the four remaining LBOND asks are still listed under the account. Refresh the Horizon orderbook: the remaining ladder is unchanged.
+On screen: the maker's stellar.expert page, lUSDC balance before (the lUSDC it received from the fills). Terminal: `npm run keeper` (the interest is real, no top-up needed). Show its output: the surplus read from the contract, each holder's cap and the amount minted, including `peg_lp`, whose lUSDC is committed to its open ask. Refresh the maker's account page: the lUSDC balance has grown; the four remaining LBOND asks are still listed under the account. Refresh the Horizon orderbook: the remaining ladder is unchanged.
 
 Say: "The vault is now worth more than the lUSDC in circulation. The keeper calls distribute with the list of holders. The contract caps every amount on-chain at the holder's share of the surplus, so the keeper can forget someone but can never over-mint or redirect yield. The maker's proceeds earned from the moment of the fill, its remaining asks are still in the book, and the peg provider earned on lUSDC that is sitting in an open offer."
 
-Then add: "For the recording, the surplus comes from a USDC transfer to the contract. The DeFindex testnet vault currently keeps deposits idle, so there is no real Blend interest on testnet; on mainnet this is the Blend yield."
+Then add: "The interest is real Blend supply interest on testnet, roughly seven percent a year at the moment; the amount you see is small because we only let it run for a few minutes." Let the deposits sit at least 10 minutes before recording the keeper step so the amounts show digits.
 
 ### 2:40 - 3:00. Close
 
@@ -89,4 +89,4 @@ Say: "Lotus is one small Soroban contract, a classic asset with a contract as ad
 
 - Keep every stellar.expert page zoomed so balances and liabilities are readable at 1080p.
 - Pre-run each script once so Horizon has indexed the state; the recording should not wait on confirmations longer than a few seconds. If a Blend-touching transaction is slow, cut and resume on the confirmed page.
-- Do not claim mainnet, audits or real yield figures. Say "testnet" at least once and "simulated" wherever it applies (LBOND, and the surplus if topped up).
+- Do not claim mainnet or audits, and do not quote the yield as a forecast: it is what Blend paid on testnet during our measurement. Say "testnet" at least once and "simulated" for LBOND.

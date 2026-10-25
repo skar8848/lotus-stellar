@@ -14,6 +14,7 @@ import {
   rpc,
   xdr,
 } from "@stellar/stellar-sdk";
+import { DECIMALS, SCALE, fromStroops, normalizeAmount, toStroops } from "./amount";
 
 // ---------------------------------------------------------------------------
 // Assets
@@ -63,29 +64,7 @@ export function sameAsset(f: HorizonAssetFields, a: AssetRef): boolean {
 // Amounts (7 decimals everywhere on Stellar)
 // ---------------------------------------------------------------------------
 
-export const DECIMALS = 7;
-export const SCALE = 10_000_000n;
-
-/** "12.5" -> 125000000n. Throws on malformed input. */
-export function toStroops(s: string): bigint {
-  const t = s.trim().replace(/,/g, "");
-  if (!/^\d*(\.\d*)?$/.test(t) || t === "" || t === ".") throw new Error("Invalid amount");
-  const [i, f = ""] = t.split(".");
-  if (f.length > DECIMALS) throw new Error(`Max ${DECIMALS} decimals`);
-  return BigInt(i || "0") * SCALE + BigInt((f + "0".repeat(DECIMALS)).slice(0, DECIMALS));
-}
-
-/** 125000000n -> "12.5" (trailing zeros trimmed, at least "0"). */
-export function fromStroops(v: bigint): string {
-  const neg = v < 0n;
-  const abs = neg ? -v : v;
-  const i = abs / SCALE;
-  const f = (abs % SCALE).toString().padStart(DECIMALS, "0").replace(/0+$/, "");
-  return `${neg ? "-" : ""}${i.toString()}${f ? "." + f : ""}`;
-}
-
-/** Normalise a user-entered amount to a Stellar-valid 7dp string. */
-export const normalizeAmount = (s: string): string => fromStroops(toStroops(s));
+export { DECIMALS, SCALE, fromStroops, normalizeAmount, toStroops };
 
 const nf = new Map<string, Intl.NumberFormat>();
 function numberFormat(minDp: number, maxDp: number): Intl.NumberFormat {
@@ -152,7 +131,42 @@ export type HorizonOffer = {
   buying: HorizonAssetFields;
   amount: string;
   price: string;
+  price_r: { n: number; d: number };
+  last_modified_time?: string;
 };
+
+/** Horizon asset fields -> AssetRef. */
+export const toAssetRef = (f: HorizonAssetFields): AssetRef =>
+  f.asset_type === "native" ? { code: "XLM", issuer: null } : { code: f.asset_code as string, issuer: f.asset_issuer as string };
+
+export type Trade = {
+  id: string;
+  time: string;
+  /** quote per base */
+  price: number;
+  baseAmount: string;
+  counterAmount: string;
+  baseIsSeller: boolean;
+  baseAccount: string;
+  counterAccount: string;
+  /** Horizon operation id (resolve to a tx hash with fetchOperationTxHash). */
+  opId: string;
+};
+
+export type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number; trades: number };
+
+export type AccountOp = {
+  id: string;
+  type: string;
+  created_at: string;
+  transaction_hash: string;
+  transaction_successful: boolean;
+  source_account: string;
+  // type-specific fields (payment: from/to/amount/asset_*, manage_sell_offer: amount/price/selling_*/buying_*, ...)
+  [k: string]: unknown;
+};
+
+export type AssetFlags = { authRequired: boolean; authRevocable: boolean; clawback: boolean; homeDomain: string | null };
 
 async function hget<T>(horizon: string, pathAndQuery: string): Promise<T> {
   const res = await fetch(`${horizon}${pathAndQuery}`, { headers: { Accept: "application/json" }, cache: "no-store" });
@@ -223,6 +237,141 @@ export async function fetchOffers(horizon: string, accountId: string): Promise<H
   return r._embedded?.records ?? [];
 }
 
+type RawTrade = {
+  id: string;
+  ledger_close_time: string;
+  base_amount: string;
+  counter_amount: string;
+  base_is_seller: boolean;
+  base_account?: string;
+  counter_account?: string;
+  price: { n: string; d: string };
+  _links?: { operation?: { href?: string } };
+};
+
+function mapTrade(t: RawTrade): Trade {
+  const n = Number(t.price?.n);
+  const d = Number(t.price?.d);
+  const opId = (t._links?.operation?.href ?? "").split("/").pop() ?? "";
+  return {
+    id: t.id,
+    time: t.ledger_close_time,
+    price: d > 0 ? n / d : NaN,
+    baseAmount: t.base_amount,
+    counterAmount: t.counter_amount,
+    baseIsSeller: t.base_is_seller,
+    baseAccount: t.base_account ?? "",
+    counterAccount: t.counter_account ?? "",
+    opId,
+  };
+}
+
+/** Recent trades of a market, newest first. price = counter (quote) per base. */
+export async function fetchTrades(horizon: string, base: AssetRef, counter: AssetRef, limit = 30): Promise<Trade[]> {
+  const q = qs({ ...assetParams("base", base), ...assetParams("counter", counter), order: "desc", limit: String(limit) });
+  const r = await hget<{ _embedded: { records: RawTrade[] } }>(horizon, `/trades?${q}`);
+  return (r._embedded?.records ?? []).map(mapTrade);
+}
+
+/** An account's recent trades (any market), newest first. Records carry the base/counter asset fields. */
+export async function fetchAccountTrades(horizon: string, accountId: string, limit = 20) {
+  type R = RawTrade & {
+    base_asset_type: string;
+    base_asset_code?: string;
+    base_asset_issuer?: string;
+    counter_asset_type: string;
+    counter_asset_code?: string;
+    counter_asset_issuer?: string;
+  };
+  const r = await hget<{ _embedded: { records: R[] } }>(horizon, `/accounts/${accountId}/trades?order=desc&limit=${limit}`);
+  return (r._embedded?.records ?? []).map((t) => ({
+    ...mapTrade(t),
+    base: toAssetRef({ asset_type: t.base_asset_type, asset_code: t.base_asset_code, asset_issuer: t.base_asset_issuer }),
+    counter: toAssetRef({ asset_type: t.counter_asset_type, asset_code: t.counter_asset_code, asset_issuer: t.counter_asset_issuer }),
+  }));
+}
+
+/** OHLC candles from /trade_aggregations (only buckets with trades exist), oldest first. */
+export async function fetchCandles(
+  horizon: string,
+  base: AssetRef,
+  counter: AssetRef,
+  resolutionMs: number,
+  limit = 200,
+): Promise<Candle[]> {
+  const q = qs({
+    ...assetParams("base", base),
+    ...assetParams("counter", counter),
+    resolution: String(resolutionMs),
+    start_time: "0",
+    end_time: String(Date.now() + resolutionMs),
+    order: "desc",
+    limit: String(limit),
+  });
+  type R = { timestamp: string; trade_count: string; base_volume: string; open: string; high: string; low: string; close: string };
+  const r = await hget<{ _embedded: { records: R[] } }>(horizon, `/trade_aggregations?${q}`);
+  return (r._embedded?.records ?? [])
+    .map((a) => ({
+      time: Math.floor(Number(a.timestamp) / 1000),
+      open: Number(a.open),
+      high: Number(a.high),
+      low: Number(a.low),
+      close: Number(a.close),
+      volume: Number(a.base_volume),
+      trades: Number(a.trade_count),
+    }))
+    .filter((c) => Number.isFinite(c.open) && Number.isFinite(c.close))
+    .reverse();
+}
+
+const opHashCache = new Map<string, string>();
+/** Horizon trade records only link the operation; resolve (and cache) its transaction hash. */
+export async function fetchOperationTxHash(horizon: string, opId: string): Promise<string | null> {
+  if (!opId) return null;
+  const hit = opHashCache.get(opId);
+  if (hit) return hit;
+  try {
+    const op = await hget<{ transaction_hash: string }>(horizon, `/operations/${opId}`);
+    if (op.transaction_hash) opHashCache.set(opId, op.transaction_hash);
+    return op.transaction_hash ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Operations of an account, newest first (payments, path payments, offers, trustlines, contract calls...). */
+export async function fetchAccountOps(horizon: string, accountId: string, limit = 25): Promise<AccountOp[]> {
+  const r = await hget<{ _embedded: { records: AccountOp[] } }>(
+    horizon,
+    `/accounts/${accountId}/operations?order=desc&limit=${limit}&include_failed=false`,
+  );
+  return r._embedded?.records ?? [];
+}
+
+const flagsCache = new Map<string, Promise<AssetFlags | null>>();
+/** Authorization flags of an asset's issuer (AUTH_REQUIRED etc.), cached per issuer. */
+export function fetchAssetFlags(horizon: string, issuer: string): Promise<AssetFlags | null> {
+  let p = flagsCache.get(issuer);
+  if (!p) {
+    p = hget<{ flags?: { auth_required?: boolean; auth_revocable?: boolean; auth_clawback_enabled?: boolean }; home_domain?: string }>(
+      horizon,
+      `/accounts/${issuer}`,
+    )
+      .then((a) => ({
+        authRequired: !!a.flags?.auth_required,
+        authRevocable: !!a.flags?.auth_revocable,
+        clawback: !!a.flags?.auth_clawback_enabled,
+        homeDomain: a.home_domain ?? null,
+      }))
+      .catch(() => {
+        flagsCache.delete(issuer);
+        return null;
+      });
+    flagsCache.set(issuer, p);
+  }
+  return p;
+}
+
 /** Submit a signed classic transaction to Horizon; throws with result codes on failure. */
 export async function submitHorizon(horizon: string, signedXdr: string): Promise<{ hash: string }> {
   const res = await fetch(`${horizon}/transactions`, {
@@ -257,6 +406,17 @@ export function explainResultCode(code: string): string {
     op_low_reserve: "below the XLM minimum reserve (each trustline/offer needs 0.5 XLM)",
     op_line_full: "destination trustline limit reached",
     op_no_destination: "destination account does not exist",
+    op_over_sendmax: "the path would cost more than the maximum you allowed",
+    op_src_no_trust: "no trustline for the asset you are paying with",
+    op_src_not_authorized: "you are not authorized to hold the asset you are paying with",
+    op_sell_no_trust: "no trustline for the asset you are selling",
+    op_buy_no_trust: "no trustline for the asset you are buying (add it first)",
+    op_sell_not_authorized: "you are not authorized to hold the asset you are selling",
+    op_buy_not_authorized: "you are not authorized by the issuer to hold the asset you are buying",
+    op_cross_self: "this offer would cross one of your own offers (cancel it or move the price)",
+    op_not_found: "offer not found (already filled or cancelled)",
+    op_malformed: "malformed operation (check price and amount)",
+    op_no_issuer: "the asset issuer account does not exist",
     tx_bad_seq: "bad sequence number (retry)",
     tx_insufficient_fee: "fee too low (network congested)",
     tx_bad_auth: "signature rejected",
@@ -331,13 +491,16 @@ export async function readVaultStats(net: NetCfg, contractId: string, source?: s
 }
 
 /**
- * Name of the top-level TransactionResultCode (e.g. "txBadSeq", "txFailed").
- * Duck-typed: SDK v17 exposes unions as `{ code }` properties, older versions as `.result().switch()`.
+ * Name of the top-level TransactionResultCode (e.g. "tx_bad_seq", "txBadSeq", "tx_failed").
+ * Duck-typed: SDK v17 exposes `result.type`, other versions `.result().switch()` or `{ code }`.
  */
 export function txResultCode(res: unknown): string | undefined {
   try {
     const r = res as { result?: unknown };
     const inner = typeof r?.result === "function" ? (r.result as () => unknown)() : r?.result;
+    // SDK v17 exposes the union as { type: "tx_bad_seq" | "tx_failed" | ... }
+    const t = (inner as { type?: unknown } | undefined)?.type;
+    if (typeof t === "string") return t;
     const u = inner as { code?: unknown; switch?: () => unknown } | undefined;
     const code = u?.code ?? (typeof u?.switch === "function" ? u.switch() : undefined);
     if (code === undefined || code === null) return undefined;
@@ -397,8 +560,37 @@ export type InvokeParams = {
   onStage?: (s: TxStage) => void;
 };
 
-/** simulate -> assemble -> sign -> send -> poll. Returns the tx hash and decoded return value. */
+/** True when an error means "the sequence number was already used" (another tx from the same account got in first). */
+export const isBadSeq = (e: unknown): boolean => /txBadSeq|tx_bad_seq|bad sequence/i.test(e instanceof Error ? e.message : String(e));
+
+/** Human text for a failed sendTransaction: decoded result code when possible, otherwise the raw XDR so it is diagnosable. */
+function describeSendError(sent: { status: string; errorResult?: unknown }): string {
+  const code = txResultCode(sent.errorResult);
+  if (code) return explainResultCode(code);
+  try {
+    const raw = (sent.errorResult as { toXDR?: (f: string) => string } | undefined)?.toXDR?.("base64");
+    return raw ? `result ${raw.slice(0, 40)}` : sent.status;
+  } catch {
+    return sent.status;
+  }
+}
+
+/**
+ * simulate -> assemble -> sign -> send -> poll. Returns the tx hash and decoded return value.
+ * One automatic retry on a bad sequence number (a concurrent transaction from the same account, e.g. a bot or
+ * another tab, can consume it between our read and our submit); a hardware or extension wallet will ask to sign again.
+ */
 export async function invokeContract(net: NetCfg, p: InvokeParams): Promise<{ hash: string; result: unknown }> {
+  try {
+    return await invokeOnce(net, p);
+  } catch (e) {
+    if (!isBadSeq(e)) throw e;
+    p.onStage?.("building");
+    return await invokeOnce(net, p);
+  }
+}
+
+async function invokeOnce(net: NetCfg, p: InvokeParams): Promise<{ hash: string; result: unknown }> {
   const server = new rpc.Server(net.rpc);
   p.onStage?.("building");
   // Sequence from Horizon: a classic tx (e.g. the ChangeTrust before a first deposit) may have
@@ -421,12 +613,15 @@ export async function invokeContract(net: NetCfg, p: InvokeParams): Promise<{ ha
   const signed = TransactionBuilder.fromXDR(signedXdr, net.passphrase);
 
   p.onStage?.("sending");
-  const sent = await server.sendTransaction(signed);
-  if (sent.status === "ERROR" || sent.status === "DUPLICATE" || sent.status === "TRY_AGAIN_LATER") {
-    let why = sent.status as string;
-    const code = txResultCode(sent.errorResult);
-    if (code) why = `${why}: ${explainResultCode(code)}`;
-    throw new Error(`send failed (${why})`);
+  let sent = await server.sendTransaction(signed);
+  // TRY_AGAIN_LATER = the node is busy: resend the SAME signed transaction (no new signature needed)
+  for (let i = 1; i <= 3 && sent.status === "TRY_AGAIN_LATER"; i++) {
+    await new Promise((r) => setTimeout(r, 1500 * i));
+    sent = await server.sendTransaction(signed);
+  }
+  // DUPLICATE means the node already has this exact transaction: keep polling its hash
+  if (sent.status === "ERROR" || sent.status === "TRY_AGAIN_LATER") {
+    throw new Error(`send failed (${sent.status}: ${describeSendError(sent)})`);
   }
 
   p.onStage?.("confirming");
@@ -455,13 +650,33 @@ export type ClassicParams = {
   source: string;
   ops: xdr.Operation[];
   sign: Signer;
-  onStage?: (s: TxStage) => void;
+  onStage?: (s: TxStage, note?: string) => void;
   /** Fee per operation in stroops (default 1000 = 0.0001 XLM). */
   feePerOp?: string;
 };
 
-/** Build a classic (non-Soroban) tx from Horizon account state, sign, submit to Horizon. */
+/** Stellar's hard limit: at most 100 operations per transaction. */
+export const MAX_OPS_PER_TX = 100;
+
+/** Split `items` into consecutive chunks of at most `size`. */
+export function chunk<T>(items: T[], size: number): T[][] {
+  const n = Math.max(1, Math.floor(size));
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n));
+  return out;
+}
+
+/** Build a classic (non-Soroban) tx from Horizon account state, sign, submit to Horizon (one retry on a bad sequence number). */
 export async function submitClassic(net: NetCfg, p: ClassicParams): Promise<{ hash: string }> {
+  try {
+    return await submitClassicOnce(net, p);
+  } catch (e) {
+    if (!isBadSeq(e)) throw e;
+    return await submitClassicOnce(net, p);
+  }
+}
+
+async function submitClassicOnce(net: NetCfg, p: ClassicParams): Promise<{ hash: string }> {
   p.onStage?.("building");
   const acct = await fetchAccount(net.horizon, p.source);
   if (!acct) throw new Error("source account not found on testnet (fund it with Friendbot first)");
@@ -479,6 +694,32 @@ export async function submitClassic(net: NetCfg, p: ClassicParams): Promise<{ ha
   const r = await submitHorizon(net.horizon, signedXdr);
   p.onStage?.("done");
   return r;
+}
+
+/**
+ * Same as submitClassic but splits `ops` into transactions of at most `chunkSize` (<= 100, the
+ * network limit), submitted one after the other (one signature each). A failure in a later chunk
+ * leaves the earlier ones on-chain; the error says how many were placed.
+ */
+export async function submitClassicChunked(
+  net: NetCfg,
+  p: ClassicParams & { chunkSize?: number },
+): Promise<{ hashes: string[] }> {
+  const size = Math.min(MAX_OPS_PER_TX, Math.max(1, p.chunkSize ?? MAX_OPS_PER_TX));
+  const parts = chunk(p.ops, size);
+  const hashes: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const tag = parts.length > 1 ? `tx ${i + 1}/${parts.length}` : undefined;
+    try {
+      const r = await submitClassic(net, { ...p, ops: parts[i], onStage: (s) => p.onStage?.(s, tag) });
+      hashes.push(r.hash);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (hashes.length > 0) throw new Error(`${hashes.length} of ${parts.length} transactions went through; tx ${i + 1} failed: ${msg}`);
+      throw e;
+    }
+  }
+  return { hashes };
 }
 
 // ---------------------------------------------------------------------------
@@ -552,9 +793,30 @@ export function buildLadder(start: string, step: string, size: string, n: number
   return out;
 }
 
-export const explorerTx = (hash: string, network = "testnet") => `https://stellar.expert/explorer/${network}/tx/${hash}`;
-export const explorerAccount = (id: string, network = "testnet") => `https://stellar.expert/explorer/${network}/account/${id}`;
-export const explorerContract = (id: string, network = "testnet") => `https://stellar.expert/explorer/${network}/contract/${id}`;
+// Explorer links live in lib/explorer.ts.
+export { explorerTx, explorerAccount, explorerContract } from "./explorer";
+
+/** One manageSellOffer: sell `selling` for `buying`. offerId "0" creates; an existing id updates (amount "0" cancels). */
+export function manageSellOfferOp(p: {
+  selling: AssetRef;
+  buying: AssetRef;
+  amount: string;
+  price: string | { n: number; d: number };
+  offerId?: string;
+}): xdr.Operation {
+  return Operation.manageSellOffer({
+    selling: toSdkAsset(p.selling),
+    buying: toSdkAsset(p.buying),
+    amount: normalizeAmount(p.amount),
+    price: p.price,
+    offerId: p.offerId ?? "0",
+  });
+}
+
+/** Cancel an existing offer: same assets and price, amount 0, its id. */
+export function cancelOfferOp(o: { id: string; selling: AssetRef; buying: AssetRef; price_r: { n: number; d: number } }): xdr.Operation {
+  return manageSellOfferOp({ selling: o.selling, buying: o.buying, amount: "0", price: o.price_r, offerId: o.id });
+}
 
 // ---------------------------------------------------------------------------
 // RPC events (best effort)
@@ -567,7 +829,31 @@ export type ContractEvent = {
   topics: unknown[];
   value: unknown;
   txHash: string;
+  /** The lotus_vault contract that emitted it (set by fetchContractEventsMulti). */
+  contractId?: string;
 };
+
+/** Events of several contracts merged, newest first. Best effort: contracts that fail are skipped. */
+export async function fetchContractEventsMulti(net: NetCfg, contractIds: string[], lookbackLedgers = 17000): Promise<ContractEvent[]> {
+  const all = await Promise.all(
+    contractIds.map((id) =>
+      fetchContractEvents(net, id, lookbackLedgers)
+        .then((evs) => evs.map((e) => ({ ...e, contractId: id })))
+        .catch(() => [] as ContractEvent[]),
+    ),
+  );
+  return all.flat().sort((a, b) => (a.ledgerClosedAt < b.ledgerClosedAt ? 1 : a.ledgerClosedAt > b.ledgerClosedAt ? -1 : 0));
+}
+
+/** Event name from topics[0] ("deposit" | "redeem" | "distribute" | ...). */
+export const eventName = (e: ContractEvent): string => (typeof e.topics[0] === "string" ? (e.topics[0] as string) : "event");
+
+/** Read an i128 field out of a decoded event value ({amount, shares, ...}). */
+export function eventAmount(e: ContractEvent, field: string): bigint | null {
+  const v = e.value as Record<string, unknown> | null;
+  const x = v && typeof v === "object" ? v[field] : undefined;
+  return typeof x === "bigint" ? x : typeof x === "number" ? BigInt(x) : null;
+}
 
 /** Recent events emitted by the vault contract; empty on any failure (retention, no events...). */
 export async function fetchContractEvents(net: NetCfg, contractId: string, lookbackLedgers = 17000): Promise<ContractEvent[]> {

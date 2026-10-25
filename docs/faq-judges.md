@@ -32,7 +32,7 @@ We are not lawyers and this is a testnet prototype. What we can say about the de
 
 ## 8. What will fees look like on mainnet?
 
-Unmeasured, and we say so. On testnet, operations that touch Blend through DeFindex cost around 100 XLM, most likely driven by ledger-entry rent (not isolated), while compute is small (a withdraw used about 3.5M CPU instructions of the 400M limit and 13 of 200 ledger entries). Mainnet rent parameters differ and the figure needs measuring. The economics also favour the intended users: deposits are treasury-sized, and the keeper amortizes a distribution across all holders in a batch. Posting and filling SDEX offers remain classic operations with classic fees.
+Unmeasured, and we say so. On testnet, calls that touch Blend through our DeFindex vault cost between 0.0015 and 0.14 XLM, and compute is small (a strategy withdraw used about 3.5M CPU instructions of the 400M limit and 13 of 200 ledger entries). An earlier measurement of about 100 XLM on a PaltaLabs vault did not reproduce. Mainnet rent parameters differ and the figure needs measuring. The economics also favour the intended users: deposits are treasury-sized, and the keeper amortizes a distribution across all holders in a batch. Posting and filling SDEX offers remain classic operations with classic fees.
 
 ## 9. Why Stellar rather than an EVM chain?
 

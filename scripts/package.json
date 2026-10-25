@@ -15,7 +15,11 @@
     "take": "node 05-demo-take.mjs",
     "keeper": "node 06-keeper-distribute.mjs",
     "yield": "node 07-simulate-yield.mjs",
-    "wait": "node 00-wait-for-contract.mjs"
+    "wait": "node 00-wait-for-contract.mjs",
+    "bot": "node bot/index.mjs",
+    "bot:setup": "node bot/setup.mjs",
+    "bot:depeg": "node bot/index.mjs --scenario depeg",
+    "bot:demo": "node bot/index.mjs --scenario demo"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.4.0"

@@ -1,9 +1,10 @@
 {
   "network": "testnet",
+  "strategy_id": "usdc-defindex-blend",
   "rpc": "https://soroban-testnet.stellar.org",
   "horizon": "https://horizon-testnet.stellar.org",
   "passphrase": "Test SDF Network ; September 2015",
-  "lotus_vault_contract": "CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6",
+  "lotus_vault_contract": "CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG",
   "wasm_hash": "adfd2361a9751a5fd7d98fc25b1e21e8932f404f9e56d58f9b65084ead97354a",
   "underlying": {
     "code": "USDC",
@@ -11,38 +12,352 @@
     "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
   },
   "receipt": {
-    "code": "lUSDC",
-    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
-    "sac": "CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV"
+    "code": "lUSDCb",
+    "issuer": "GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO",
+    "sac": "CC6YDSEJRF7QH5JL7MVEYEIU3CTMNEHS4XIK5R36DYA5EVUYIP4PAHPG"
   },
-  "defindex_vault": "CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN",
+  "defindex_vault": "CDCIDX5FXOENXW4ODR2D7QMRKL4F2NTZYFVZEFF63GTNRVVDXLCQ7EEC",
   "defindex_strategy": "CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY",
+  "defindex_vault_manager": "GBYDRBOEKE53G42GZQLLDSQL6DOVZKFWETPC37TMXVWMDBDLUGVX42XI",
+  "defindex_fee_receiver": "GAAVS42C7H4566QE6R4LVBSEFCDGLJLS24TLJJCIQZXAVJHNEALNHTJE",
+  "defindex_factory": "CDSCWE4GLNBYYTES2OCYDFQA2LLY4RBIAX6ZI32VSUXD7GO6HRPO4A32",
   "blend_pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
   "accounts": {
-    "admin": "GBP5MOETKFQIYOCQGD676LQTV73MKZVDGNGL44QO2DGMFO7RBI5RAYBW",
-    "keeper": "GD5UIZDBCBFKRESNOXR6SGLZKMU62TT6UWL2MHN546QQJNDUM3IYZZQM",
-    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
-    "smoke_test_user": "GC6ESRSGOI3IOJOUQLMU7A5HH4UKISBBDDXXBDRIFAVRGHIZNRE65STI"
+    "admin": "GD3C4UM4SXUGPYRVAUQA4M33BSF2FEZODRL7UBAID6XXIELUBMXGGUZX",
+    "keeper": "GAHIAT6QRODPMJ3KJ4LPGVOYXCEOUM7EDRXFSJOZ6SSOSQWT7RER3A7N",
+    "issuer": "GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO",
+    "defindex_vault_manager": "GBYDRBOEKE53G42GZQLLDSQL6DOVZKFWETPC37TMXVWMDBDLUGVX42XI",
+    "defindex_fee_receiver": "GAAVS42C7H4566QE6R4LVBSEFCDGLJLS24TLJJCIQZXAVJHNEALNHTJE",
+    "smoke_test_user": "GB2OF2GQJZ3HRZRH5XCKSHBROGHRAVMMF5ZS45IFBQL5TMEEUFHAKVDR",
+    "smoke_test_user_2": "GBYSVY5KIILGBMZKIP2LGUY23OYXABA6IQZ5AZ22MUZP4JPROTH6WXWJ"
+  },
+  "defindex_vault_params": {
+    "name": "DeFindex-Vault-Lotus USDC Blend",
+    "symbol": "LUSDCB",
+    "upgradable": false,
+    "roles": {
+      "emergency_manager": "GBYDRBOEKE53G42GZQLLDSQL6DOVZKFWETPC37TMXVWMDBDLUGVX42XI",
+      "manager": "GBYDRBOEKE53G42GZQLLDSQL6DOVZKFWETPC37TMXVWMDBDLUGVX42XI",
+      "rebalance_manager": "GBYDRBOEKE53G42GZQLLDSQL6DOVZKFWETPC37TMXVWMDBDLUGVX42XI",
+      "fee_receiver": "GAAVS42C7H4566QE6R4LVBSEFCDGLJLS24TLJJCIQZXAVJHNEALNHTJE"
+    },
+    "vault_fee_bps_at_creation": 100,
+    "vault_fee_bps_now": 0,
+    "defindex_protocol_fee_bps": 2000,
+    "soroswap_router": "CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD",
+    "fee_note": "vault_fee is a share of the GAINS (never of principal). 100 bps = 1% of yield is locked in the vault report and excluded from get_asset_amounts_per_shares (so from Lotus vault_value); 2000 bps (set by the factory) of that locked fee goes to the DeFindex protocol receiver GDOFDSMF..., the rest to defindex_fee_receiver. The protocol receiver has NO USDC trustline on testnet, so rebalance / rescue / distribute_fees revert once a locked fee > 0 exists. After the fee-netting measurements the manager set the fee to 0 (lock_fees(Some(0)), tx 2280d2e4...) and released the 291 stroops that had been locked (release_fees, tx bdd32307...)."
+  },
+  "seed": {
+    "amount_usdc": 1000,
+    "deposit_tx": "51875aa8f30f6fbce04797625c9669cd469702782d64bdfa8cd509acd1cea9a2",
+    "invest_rebalance_tx": "c72d8224ee0994a253c4523d0f2b8d91970809f72d8c312bb148c8a7193ae18f",
+    "after_seed": {
+      "idle_amount": "0",
+      "invested_amount": "10000000109",
+      "strategy_allocation": "10000000109"
+    },
+    "note": "fetch_total_managed_funds right after the Invest rebalance (109 stroops are interest accrued between the tx and the read)."
   },
   "deploy_txs": {
-    "lotus_vault_deploy": "4f7bfbeb776f3a8a45c924cb73ae868ef12b1177655cef2f976a6ec86aa19233",
-    "receipt_set_admin": "808c27c7d6e28072f52302593d6aed37fec4316127f52a751a434a0b464e199a"
+    "defindex_vault_create": "7568e866b6799ad6c11bb6ff94b6c3a978e3c76084f6dcef54fb6572a4c4d037",
+    "defindex_seed_deposit": "51875aa8f30f6fbce04797625c9669cd469702782d64bdfa8cd509acd1cea9a2",
+    "defindex_seed_invest_rebalance": "c72d8224ee0994a253c4523d0f2b8d91970809f72d8c312bb148c8a7193ae18f",
+    "receipt_sac_deploy": "63b3dd47321877a58e4a931fc6a2e7ce5c799af696b0039252c9475710fdd616",
+    "lotus_vault_deploy": "b415ea957be10f1d915723b261065b634fb43019dfc35e81c45dd38ab63df34e",
+    "receipt_set_admin": "8f6dece639f9def17cfbaf17cacf5a47d179693f3e98fdaef28328836276aa96",
+    "defindex_lock_fees_zero": "2280d2e4731c64ac546a5f612bd2b64b7b15f4fcb67aaea5726b2fda3c3d63b1",
+    "defindex_release_locked_fees": "bdd3230797cde8ae565c41e0497f43c03c606365ea721e5b39f71024b24af267"
   },
   "smoke_test_txs": [
-    "1307e6bf3456549c07752ecef45baea992c7e1ca185cc2eded98fd79b5a4624f",
-    "d1ec09856788d1c97f86c9624f130af0b20c52386cbb021ec73be7f44414f985",
-    "042c1ca78d62fba596bfa078fc09fe515e10e662b1cabca12cba5e31f4201131",
-    "d094e1b6c5dd289bae259cd5ff1f4b4d205c491876ae73d304e43ea9141a8353"
+    "c20896d8d3ed8871185a7da3541db29d489d4112dd6640385137831b61a63d10",
+    "05c1232ec2b326f2637f760b676463bced64427c7b1016fcf0904f8853986dc7",
+    "8c3584f3929115b6bcfe269892da082197e3673b375ae36da56392e0624dc194",
+    "1da1629ac019365e22bb673c29e01345209e5794ae76469c3803ec43e3128a21",
+    "95716ece0bb47f1232b85abca4294f99b6eacf48206932a3e7dac3fead56e51d",
+    "c21698aad8bb4ff798039066c6d984a6949cbfe838b12891f3ef370f3d1d96ab",
+    "7ec13f1f3d6c31e3ad2423e48b19404c9bbbea34e9edc752cd70ca53b1c1b0bb",
+    "071b6f196aeb89dad6b016e8ae7e22f92a3fdcf3a442732fd4f8eb666443138a",
+    "56e2b7619de8e4bce450ca71c77744ac8b733480705fc7c487a6c9edf239c53b"
   ],
   "smoke_test": {
-    "1307e6bf": "deposit(scratch, 100 USDC) -> 999735775 df shares, 100 lUSDC minted. fee 0.036 XLM",
-    "d1ec0985": "redeem(scratch, 50 lUSDC) -> 499867889 df shares burnt, 49.9999999 USDC paid (pro-rata: position was 1 stroop under supply). fee 0.0024 XLM",
-    "042c1ca7": "transfer 1 USDC scratch -> contract (donation, simulates yield) -> surplus = 1 USDC",
-    "d094e1b6": "distribute([scratch],[1 USDC]) by keeper -> 1 lUSDC minted; over-cap call rejected at simulation with Error(Contract,#6) ExceedsCap"
+    "c20896d8": "direct DeFindex deposit(10 USDC, invest=true) by holder2 into the seeded vault -> allocation [{strategy CALLOM5I, 100000000}] returned, idle_amount stays 0, invested_amount +10 USDC: deposit(invest=true) auto-invests once the vault is seeded. fee 0.0505 XLM",
+    "05c1232e": "direct DeFindex withdraw(99999971 shares) -> 10.0000003 USDC paid, unwound from Blend. fee 0.0025 XLM",
+    "8c3584f3": "Lotus v2 deposit(holder, 100 USDC) -> 999999519 df shares, 100 lUSDCb minted, vault invested_amount +100 USDC, vault_value 1 stroop under supply. fee 0.0373 XLM, 8.07M CPU",
+    "1da1629a": "Lotus v2 deposit(holder2, 50 USDC) -> 499999482 df shares, idle_amount 0. fee 0.0037 XLM",
+    "95716ece": "distribute([holder, holder2], [0.0001810, 0.0000905] lUSDCb) signed by the v2 keeper through the unchanged scripts/06-keeper-distribute.mjs (LOTUS_DEPLOY_DIR pointing at a copy of this file): real surplus 0.0002715 USDC minted pro-rata. fee 0.0015 XLM, 4.7M CPU",
+    "c21698aa": "Lotus v2 redeem(holder, 50 lUSDCb) -> exactly 50.0000000 USDC paid, withdrawn from Blend through DeFindex. fee 0.0034 XLM, 14.05M CPU",
+    "7ec13f1f": "Lotus v2 redeem(holder2, 50.0000905 lUSDCb) full exit -> 50.0000905 USDC paid (1:1). fee 0.0034 XLM",
+    "071b6f19": "Lotus v2 deposit(holder2, 100 USDC) after vault fee set to 0 -> still auto-invests (idle 0, invested +100 USDC). fee 0.0037 XLM",
+    "56e2b761": "second distribute (vault fee 0): 0.0003243 lUSDCb minted to 2 holders, surplus left 0.0000034 USDC. fee 0.0015 XLM"
   },
   "amounts": {
     "decimals": 7,
     "one_unit_stroops": 10000000
   },
-  "notes": "Underlying = Blend testnet USDC (USDC:GATALT..., obtained via the Blend testnet faucet https://ewqw4hx7oa.execute-api.us-east-1.amazonaws.com/getAssets?userId=G... with header Origin: https://testnet.blend.capital; returns an issuer-signed tx XDR to co-sign and submit: 1000 USDC + BLND/wETH/wBTC per call). Receipt lUSDC is a classic asset whose SAC admin is the lotus_vault contract; the issuer account GBBBCE5X... is NOT locked (hackathon), so it could still issue lUSDC via classic payments. Classic accounts need a trustline to lUSDC before deposit (stellar tx new change-trust --line lUSDC:GBBBCE5X...). At deploy time the DeFindex USDC vault held all funds idle (strategy allocation 0, invested_amount 0), so deposit/redeem did not touch Blend and cost 0.002-0.04 XLM; when the strategy is active expect ~90-100 XLM per deposit/redeem on testnet (rent). vault_value() can be 1 stroop below supply() right after a deposit because of DeFindex share rounding; redeem then pays strictly pro-rata (1 stroop less)."
+  "costs": [
+    {
+      "tx": "7568e866b6799ad6c11bb6ff94b6c3a978e3c76084f6dcef54fb6572a4c4d037",
+      "op": "defindex_vault_create (factory.create_defindex_vault)",
+      "fee_xlm": "0.0366448",
+      "cpu_instructions_actual": 2906877,
+      "cpu_instructions_declared": 3041965
+    },
+    {
+      "tx": "51875aa8f30f6fbce04797625c9669cd469702782d64bdfa8cd509acd1cea9a2",
+      "op": "defindex seed deposit 1000 USDC invest=false",
+      "fee_xlm": "0.1432791",
+      "cpu_instructions_actual": 2322688,
+      "cpu_instructions_declared": 2470083
+    },
+    {
+      "tx": "c72d8224ee0994a253c4523d0f2b8d91970809f72d8c312bb148c8a7193ae18f",
+      "op": "defindex rebalance Invest 1000 USDC -> Blend strategy",
+      "fee_xlm": "0.0036602",
+      "cpu_instructions_actual": 5077921,
+      "cpu_instructions_declared": 5181300
+    },
+    {
+      "tx": "63b3dd47321877a58e4a931fc6a2e7ce5c799af696b0039252c9475710fdd616",
+      "op": "receipt SAC deploy lUSDCb",
+      "fee_xlm": "0.0051676",
+      "cpu_instructions_actual": 124070,
+      "cpu_instructions_declared": 177793
+    },
+    {
+      "tx": "b415ea957be10f1d915723b261065b634fb43019dfc35e81c45dd38ab63df34e",
+      "op": "lotus_vault v2 deploy",
+      "fee_xlm": "0.0209193",
+      "cpu_instructions_actual": 925750,
+      "cpu_instructions_declared": 980134
+    },
+    {
+      "tx": "8f6dece639f9def17cfbaf17cacf5a47d179693f3e98fdaef28328836276aa96",
+      "op": "receipt SAC set_admin -> lotus v2",
+      "fee_xlm": "0.0003752",
+      "cpu_instructions_actual": 158424,
+      "cpu_instructions_declared": 210144
+    },
+    {
+      "tx": "c20896d8d3ed8871185a7da3541db29d489d4112dd6640385137831b61a63d10",
+      "op": "direct defindex deposit 10 USDC invest=true (holder2)",
+      "fee_xlm": "0.0505240",
+      "cpu_instructions_actual": 7135820,
+      "cpu_instructions_declared": 7624062
+    },
+    {
+      "tx": "05c1232ec2b326f2637f760b676463bced64427c7b1016fcf0904f8853986dc7",
+      "op": "direct defindex withdraw 99999971 shares (holder2)",
+      "fee_xlm": "0.0024547",
+      "cpu_instructions_actual": 6645486,
+      "cpu_instructions_declared": 7097331
+    },
+    {
+      "tx": "8c3584f3929115b6bcfe269892da082197e3673b375ae36da56392e0624dc194",
+      "op": "lotus v2 deposit 100 USDC (holder)",
+      "fee_xlm": "0.0373335",
+      "cpu_instructions_actual": 8073394,
+      "cpu_instructions_declared": 8696146
+    },
+    {
+      "tx": "1da1629ac019365e22bb673c29e01345209e5794ae76469c3803ec43e3128a21",
+      "op": "lotus v2 deposit 50 USDC (holder2)",
+      "fee_xlm": "0.0036561",
+      "cpu_instructions_actual": 8093132,
+      "cpu_instructions_declared": 8699096
+    },
+    {
+      "tx": "95716ece0bb47f1232b85abca4294f99b6eacf48206932a3e7dac3fead56e51d",
+      "op": "lotus v2 distribute 2 recipients, 0.0002715 lUSDCb (keeper, scripts/06)",
+      "fee_xlm": "0.0015181",
+      "cpu_instructions_actual": 4716983,
+      "cpu_instructions_declared": 5001215
+    },
+    {
+      "tx": "c21698aad8bb4ff798039066c6d984a6949cbfe838b12891f3ef370f3d1d96ab",
+      "op": "lotus v2 redeem 50 lUSDCb (holder)",
+      "fee_xlm": "0.0034168",
+      "cpu_instructions_actual": 14051443,
+      "cpu_instructions_declared": 14993144
+    },
+    {
+      "tx": "7ec13f1f3d6c31e3ad2423e48b19404c9bbbea34e9edc752cd70ca53b1c1b0bb",
+      "op": "lotus v2 redeem 50.0000905 lUSDCb, full exit (holder2)",
+      "fee_xlm": "0.0034167",
+      "cpu_instructions_actual": 14047611,
+      "cpu_instructions_declared": 14989159
+    },
+    {
+      "tx": "2280d2e4731c64ac546a5f612bd2b64b7b15f4fcb67aaea5726b2fda3c3d63b1",
+      "op": "defindex lock_fees(Some(0)) (manager)",
+      "fee_xlm": "0.0004332",
+      "cpu_instructions_actual": 1118558,
+      "cpu_instructions_declared": 1174942
+    },
+    {
+      "tx": "bdd3230797cde8ae565c41e0497f43c03c606365ea721e5b39f71024b24af267",
+      "op": "defindex release_fees(strategy, 291) (manager)",
+      "fee_xlm": "0.0004082",
+      "cpu_instructions_actual": 987805,
+      "cpu_instructions_declared": 1046907
+    },
+    {
+      "tx": "071b6f196aeb89dad6b016e8ae7e22f92a3fdcf3a442732fd4f8eb666443138a",
+      "op": "lotus v2 deposit 100 USDC after fee=0 (holder2)",
+      "fee_xlm": "0.0036560",
+      "cpu_instructions_actual": 8089576,
+      "cpu_instructions_declared": 8695398
+    },
+    {
+      "tx": "56e2b7619de8e4bce450ca71c77744ac8b733480705fc7c487a6c9edf239c53b",
+      "op": "lotus v2 distribute 2 recipients, 0.0003243 lUSDCb, fee=0 (keeper, scripts/06)",
+      "fee_xlm": "0.0015180",
+      "cpu_instructions_actual": 4715339,
+      "cpu_instructions_declared": 4999505
+    }
+  ],
+  "observed_apr": {
+    "summary": "Blend USDC supply rate 6.91% APR (gross, whole pool); Lotus holders net 6.85% with the 1% vault fee (window A) and 6.91% with the fee at 0 (window B). Same reading as Blend's own rate model at the pool's 88.7% utilization.",
+    "measured_on": "2026-10-25 (ledgers 5387707 to 5388112, 34 minutes of sampling, two windows of 16.5 and 15 minutes)",
+    "method": [
+      "A sampler simulated, every 45 s (9 ledgers) and in parallel on the same ledger (46 of 46 samples had no ledger skew): Blend pool get_reserve(USDC) -> data.b_rate (1e12 scale) and data.last_time (the ledger close time the interest is accrued to); Lotus vault_value(), surplus(), supply(); DeFindex fetch_total_managed_funds, report, total_supply, balance(lotus), get_asset_amounts_per_shares; strategy balance(vault).",
+      "Gross APR = (b_rate_end / b_rate_start - 1) * 31,536,000 / (t_end - t_start) with t = last_time. It is the rate every supplier of the Blend pool gets, independent of our deposits. get_reserve re-accrues to the current ledger on each call, so no pool interaction is needed to see it move.",
+      "Net APR (what Lotus holders earn) = growth of Lotus' price per DeFindex share, vault_value() / df_shares, annualized the same way. Deposits, redeems and distribute() do not move that price (up to 1 stroop of rounding), so it is valid across the events inside the windows (2 deposits, 2 redeems and 2 distribute calls of ours, plus a 1 USDC deposit/redeem by another agent's account, happened during the sampling).",
+      "Window A ran with vault_fee = 100 bps and ended just before lock_fees(0); window B starts after release_fees (the 291 stroops locked fee returned to depositors, a one-off step up that is excluded from both windows)."
+    ],
+    "assumptions": [
+      "year = 365 days = 31,536,000 s; simple (non-compounded) annualization of a 15 to 17 minute window; the rate is a snapshot of testnet pool conditions, not a forecast.",
+      "Fee model: vault_fee is a share of gains only. net/gross should equal 1 - fee_bps/10000."
+    ],
+    "rate_model_crosscheck": "Blend v2 rate model with the pool's USDC reserve config (r_base 0.05%, r_one 3%, r_two 10%, target util 70%, max util 95%, ir_mod 0.8245, backstop take 10%): utilization 88.7% -> borrow APR 8.67% -> supply APR = 8.67% * 0.887 * 0.9 = 6.93%, against 6.937% measured over the first 45 s interval and 6.914% over the full windows.",
+    "noise": "Net figures are quantized by 1 stroop of vault_value (about 1.5e9 stroops): +/-1 stroop = +/-0.0064% APR over window A (position 5e8 stroops at its end) and +/-0.0023% over window B. The observed gap to the fee-adjusted expectation (window A: 6.8487 vs 6.9139 * 0.99 = 6.8448; window B: 6.9099 vs 6.9141) is 0.6 stroop (A) and 1.8 stroops (B), i.e. rounding. Interval-to-interval spread of the gross rate: stdev 0.012 pts (A) and 0.007 pts (B), range 6.906 to 6.938.",
+    "caveats": [
+      "The rate comes from other testnet users: the pool runs at 88.7% utilization (target 70%, max 95%). If borrowers repay, the supply APR falls (model: about 1.6% at 70% utilization); if utilization nears 95% withdrawals can revert on Blend's utilization cap. Read the live rate from chain (b_rate over two reads) instead of hard-coding it.",
+      "BLND emission rewards are not counted: the Blend strategy only compounds them when its keeper (a PaltaLabs key) calls harvest.",
+      "The Blend strategy is shared with other DeFindex vaults: it held about 68,000 USDC in total at the time, of which 1,150 USDC are ours. Our share price follows the shared strategy.",
+      "Absolute amounts are small on purpose (100 USDC earns about 0.019 USDC per day at 6.9%): the observation is the live accrual and the on-chain surplus -> distribute -> mint loop, not the size."
+    ],
+    "window_a": {
+      "label": "vault fee 1% (100 bps) on gains",
+      "vault_fee_bps": 100,
+      "from": {
+        "sample": 0,
+        "ledger": 5387707,
+        "ledger_close_unix": 1792962122,
+        "utc": "2026-10-25T21:02:02Z"
+      },
+      "to": {
+        "sample": 22,
+        "ledger": 5387905,
+        "ledger_close_unix": 1792963112,
+        "utc": "2026-10-25T21:18:32Z"
+      },
+      "seconds": 990,
+      "samples": 23,
+      "blend_pool_b_rate": {
+        "start": "1059002528376",
+        "end": "1059004826894",
+        "scale": "1e12"
+      },
+      "blend_supply_apr_pct": 6.9139,
+      "lotus_net_apr_pct": 6.8487,
+      "net_over_gross": 0.99057,
+      "expected_net_over_gross_from_fee": 0.99,
+      "instant_blend_apr_pct_per_45s": {
+        "min": 6.906,
+        "max": 6.938,
+        "mean": 6.914,
+        "stdev": 0.012
+      },
+      "pool_utilization_pct": {
+        "start": 88.73,
+        "end": 88.7
+      },
+      "ir_mod": {
+        "start": 0.8240907,
+        "end": 0.8244593
+      },
+      "rate_model_supply_apr_pct": {
+        "start": 6.937,
+        "end": 6.93
+      },
+      "lotus_share_price": {
+        "start": 1.0000006100002934,
+        "end": 1.0000027599962245
+      },
+      "rounding_noise_apr_pct_per_stroop": 0.0064
+    },
+    "window_b": {
+      "label": "vault fee 0 (set after window A)",
+      "vault_fee_bps": 0,
+      "from": {
+        "sample": 24,
+        "ledger": 5387923,
+        "ledger_close_unix": 1792963202,
+        "utc": "2026-10-25T21:20:02Z"
+      },
+      "to": {
+        "sample": 44,
+        "ledger": 5388103,
+        "ledger_close_unix": 1792964102,
+        "utc": "2026-10-25T21:35:02Z"
+      },
+      "seconds": 900,
+      "samples": 21,
+      "blend_pool_b_rate": {
+        "start": "1059005036323",
+        "end": "1059007125944",
+        "scale": "1e12"
+      },
+      "blend_supply_apr_pct": 6.9141,
+      "lotus_net_apr_pct": 6.9099,
+      "net_over_gross": 0.9994,
+      "expected_net_over_gross_from_fee": 1,
+      "instant_blend_apr_pct_per_45s": {
+        "min": 6.909,
+        "max": 6.93,
+        "mean": 6.914,
+        "stdev": 0.007
+      },
+      "pool_utilization_pct": {
+        "start": 88.7,
+        "end": 88.64
+      },
+      "ir_mod": {
+        "start": 0.8244929,
+        "end": 0.8248274
+      },
+      "rate_model_supply_apr_pct": {
+        "start": 6.93,
+        "end": 6.913
+      },
+      "lotus_share_price": {
+        "start": 1.0000029879959125,
+        "end": 1.0000049600082699
+      },
+      "rounding_noise_apr_pct_per_stroop": 0.0023
+    },
+    "fee_netting_check": "All 46 same-ledger samples: Lotus vault_value() == floor(net_total * lotus_df_shares / df_total_supply) + lotus_idle_usdc (1 stroop of dust), with net_total = strategy_balance - locked_fee - floor(pending_gain * fee_bps / 10000) (fee_bps 100 until lock_fees(0), 0 after); difference 0 stroops on every sample. fetch_total_managed_funds only subtracts the locked part."
+  },
+  "final_state": {
+    "as_of_utc": "2026-10-25T21:35:56Z",
+    "lotus_v2": {
+      "supply": "1500005053",
+      "vault_value": "1500005103",
+      "surplus": "50"
+    },
+    "defindex_vault": {
+      "total_managed": "11500055796",
+      "invested_amount": "11500055796",
+      "idle_amount": "0",
+      "vault_fee_bps": 0,
+      "locked_fee": "0",
+      "df_total_supply": "11499997499"
+    },
+    "holders_lUSDCb": {
+      "GB2OF2GQJZ3HRZRH5XCKSHBROGHRAVMMF5ZS45IFBQL5TMEEUFHAKVDR": "50.0002891",
+      "GBYSVY5KIILGBMZKIP2LGUY23OYXABA6IQZ5AZ22MUZP4JPROTH6WXWJ": "100.0002162"
+    },
+    "note": "stroops have 7 decimals; supply 1500005053 = 150.0005053 lUSDCb"
+  },
+  "notes": "Second Lotus instance (same wasm as v1) on OUR OWN DeFindex vault 'Lotus USDC Blend' (LUSDCB), created through the DeFindex factory with fresh keys as manager / rebalance manager / emergency manager (defindex_vault_manager) and fee receiver. Why: on the PaltaLabs vault used by v1 the Blend strategy allocation is 0 and deposit(invest=true) invests only proportionally to the existing allocation, so it stays idle; seeding needs a rebalance Invest by the vault's rebalance manager, which we do not control. Here the manager deposited 1000 USDC (invest=false) and called rebalance([Invest(strategy, 1000 USDC)]) once; since then every deposit(invest=true), including Lotus', goes into the Blend pool. Receipt lUSDCb is a new classic asset (issuer GC7QBZD2...) whose SAC admin is this contract; v1's lUSDC SAC is locked to the v1 contract. Vault fee was created at 100 bps (1% of gains) and set to 0 after the netting measurements because the DeFindex protocol fee receiver (GDOFDSMF..., PaltaLabs) has no USDC trustline on testnet, which makes rebalance / rescue / distribute_fees revert as soon as a locked fee exists (deposit / withdraw, hence Lotus, are unaffected). Blend-touching calls cost 0.0015 to 0.14 XLM here (the '~90-100 XLM' figure of v1 was not reproduced). Views vault_value() / surplus() must be simulated (--send=no): DeFindex updates its fee report inside get_asset_amounts_per_shares, so they carry a 1-entry write footprint. Dust: deposit of 1 stroop reverts with DeFindex error #117 (0 shares), 2 stroops and up work. Secrets of every key named here are in deployments/testnet.strategies.secrets.json (gitignored). See deployments/README.md."
 }

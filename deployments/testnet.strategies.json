@@ -1,0 +1,65 @@
+{
+  "network": "testnet",
+  "strategies": [
+    {
+      "id": "usdc-defindex-idle",
+      "label": "USDC · DeFindex vault (idle on testnet)",
+      "status": "idle",
+      "lotus_vault_contract": "CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6",
+      "underlying": {
+        "code": "USDC",
+        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+        "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+      },
+      "receipt": {
+        "code": "lUSDC",
+        "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
+        "sac": "CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV"
+      },
+      "defindex_vault": "CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN",
+      "defindex_strategy": "CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY",
+      "blend_pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+      "notes": "Lotus v1 on the PaltaLabs testnet USDC DeFindex vault. The Blend USDC strategy is registered in that vault but its allocation is 0 (invested_amount 0): deposit(invest=true) skips it, and only the vault's rebalance manager (a PaltaLabs key we do not control) could seed it. Deposits stay idle, no yield accrues; only scripts/07-simulate-yield (a donation to the contract) shows the surplus -> distribute loop."
+    },
+    {
+      "id": "usdc-defindex-blend",
+      "label": "USDC · DeFindex → Blend (live yield)",
+      "status": "live",
+      "lotus_vault_contract": "CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG",
+      "underlying": {
+        "code": "USDC",
+        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+        "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+      },
+      "receipt": {
+        "code": "lUSDCb",
+        "issuer": "GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO",
+        "sac": "CC6YDSEJRF7QH5JL7MVEYEIU3CTMNEHS4XIK5R36DYA5EVUYIP4PAHPG"
+      },
+      "defindex_vault": "CDCIDX5FXOENXW4ODR2D7QMRKL4F2NTZYFVZEFF63GTNRVVDXLCQ7EEC",
+      "defindex_strategy": "CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY",
+      "blend_pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+      "notes": "Lotus v2 on our own DeFindex vault (Lotus USDC Blend, LUSDCB), seeded once with 1000 USDC into the Blend USDC strategy, so every deposit(invest=true) goes straight into Blend and vault_value() grows with the pool's b_rate every ledger. Measured on 2026-10-25: Blend supply rate about 6.9% APR (testnet pool at ~88.7% utilization, so it moves with other testnet users), vault fee 0. Proven on-chain: deposit, distribute of real surplus, partial and full redeem. See deployments/testnet.contract.v2.json (observed_apr) and deployments/README.md."
+    },
+    {
+      "id": "xlm-defindex-blend",
+      "label": "XLM · DeFindex → Blend (coming soon)",
+      "status": "coming-soon",
+      "lotus_vault_contract": null,
+      "underlying": {
+        "code": "XLM",
+        "issuer": null,
+        "sac": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+      },
+      "receipt": {
+        "code": "lXLM",
+        "issuer": null,
+        "sac": null
+      },
+      "defindex_vault": null,
+      "defindex_strategy": "CDVLOSPJPQOTB6ZCWO5VSGTOLGMKTXSFWYTUP572GTPNOWX4F76X3HPM",
+      "blend_pool": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
+      "notes": "Announcement only, nothing deployed. Same recipe as USDC: our own DeFindex vault on the XLM Blend strategy (same pool, reserve 0), seeded once with a rebalance Invest. The PaltaLabs XLM vault CCLV4H7WTLJQ7ATLHBBQV2WW3OINF3FOY5XZ7VPHZO7NH3D2ZS4GFSF6 was idle too when checked (invested_amount 0). Avoid the blend-v2.1 XLM strategy (a deposit once simulated at 23,584 XLM)."
+    }
+  ]
+}

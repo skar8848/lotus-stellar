@@ -27,18 +27,18 @@
       "taker_faucet": "c2513e18cc91e447f6f26e98a13eb715c1236f5eb89b870e722f921dd1b8c895",
       "blocked_taker_faucet": "db1ba51a712f81475f19b1af8cd0298ef59fed88f19c376fa1a255a3ba12bde4",
       "maker_trust_receipt": "f63987b7fa7e7b9251cbf34046948693e92d02a517692c607c1f9ad6e9f7af21",
-      "maker_deposit": "2679a8b720b5329459eea54137c55750c361319fbc081b495ba9784f480635f3",
-      "peg_lp_trust_receipt": "80f6a619ca0f10114c5ce72667266940028f17109e7c46704f314ce9a78da7d0",
-      "peg_lp_deposit": "a8f722eb2e2c321eb0f0faa5f50e6360cbf152eb5893e2c3b31593a68aa03de6",
+      "maker_deposit": "ed214d09d89c838e3b06b3b57afa1eb253816fb264f61afe6b6cf9afcab0205d",
+      "peg_lp_trust_receipt": "7179962e23e2f199f39c7451bb601503966390e846574794cecfde4ac474b334",
+      "peg_lp_deposit": "a87fd100f8e7d1880c6e9ff6924886cb8c9ffd7fb3ff6759482cc428089f44ad",
       "taker_trust_receipt": "b8e8ab13a50113dda255fbb27945536df0bb772acf97d6842169534e7a66b518"
     },
     "seed_book": {
-      "peg_book": "1a0f6912ef7d535599d17ea85fa24a39cc0649f4904483b626a38a0ea665a241",
-      "bond_ladder": "96fbbecd3f94b760148c94a0d9efa8527494ca5d1a20d079dac496f1e7bbaafb"
+      "peg_book": "0ed247f37deae3248a7835ac69e3518a8c9412d115472c069f6f1f3f6c269ad5",
+      "bond_ladder": "c4ce3c16fed009534427f68364d7eabe179910fa30d69ab5cacc578385f5d231"
     },
     "demo_take": {
-      "path_payment": "6bf2153be4a4ad5e8779accb7f0b7b843e53218cb3be07a4f975f033135660a7",
-      "blocked_path_payment_attempt": "4bde4ef3496a3d9a91b3319c5135d51ba04ef8fca1a311661da68f832a8661b9"
+      "path_payment": "d5f8ba840f201b64f856516883674b9d897bcff92408431995e8cffa431a96e7",
+      "blocked_path_payment_attempt": "da681a62cef5f895185761e42d237b8b63a060a67af30efc945ac574b5238631"
     },
     "keeper_distribute": {
       "last": [
@@ -49,7 +49,7 @@
   },
   "horizon": "https://horizon-testnet.stellar.org",
   "rpc": "https://soroban-testnet.stellar.org",
-  "updated_at": "2026-10-25T19:03:54.206Z",
+  "updated_at": "2026-10-25T21:49:27.330Z",
   "rwa": {
     "code": "LBOND",
     "issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF",
@@ -70,9 +70,9 @@
     ]
   },
   "receipt": {
-    "code": "lUSDC",
-    "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",
-    "sac": "CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV"
+    "code": "lUSDCb",
+    "issuer": "GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO",
+    "sac": "CC6YDSEJRF7QH5JL7MVEYEIU3CTMNEHS4XIK5R36DYA5EVUYIP4PAHPG"
   },
   "underlying": {
     "code": "USDC",
@@ -86,39 +86,39 @@
   "offers": {
     "peg": {
       "sell_receipt": {
-        "offer_id": "931612",
+        "offer_id": "931748",
         "amount": "200",
         "price": "10005/10000"
       },
       "sell_underlying": {
-        "offer_id": "931613",
+        "offer_id": "931749",
         "amount": "200",
         "price": "10000/9995"
       }
     },
     "ladder": [
       {
-        "offer_id": "931614",
+        "offer_id": "931750",
         "amount": "100",
         "price": "0.98"
       },
       {
-        "offer_id": "931615",
+        "offer_id": "931751",
         "amount": "100",
         "price": "0.99"
       },
       {
-        "offer_id": "931616",
+        "offer_id": "931752",
         "amount": "100",
         "price": "1.00"
       },
       {
-        "offer_id": "931617",
+        "offer_id": "931753",
         "amount": "100",
         "price": "1.01"
       },
       {
-        "offer_id": "931618",
+        "offer_id": "931754",
         "amount": "100",
         "price": "1.02"
       }
@@ -126,7 +126,7 @@
   },
   "demo_take": {
     "send_amount": "150",
-    "estimated_out": "152.4495327"
+    "estimated_out": "152.4899165"
   },
   "last_distribution": {
     "total": "4.9999997",

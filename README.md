@@ -126,43 +126,45 @@ cd web && npm install && npm run dev
 
 ## Testnet deployment
 
-Addresses are recorded in `deployments/testnet.contract.json` (contract id, assets, admin, keeper, issuer) and `deployments/testnet.classic.json` (RWA asset, demo accounts, offers, transaction hashes). Those files are authoritative; the table below mirrors them.
+Addresses are recorded in `deployments/`: `testnet.contract.json` is the active deployment, `testnet.strategies.json` lists every Lotus strategy, `testnet.classic.json` holds the RWA asset, the demo accounts and the offers. Those files are authoritative; the tables below mirror them as of 25 October 2026.
 
-| Item | Value |
+Two Lotus vault instances exist side by side (same wasm). They differ in the DeFindex vault they wrap:
+
+| | v2 `usdc-defindex-blend` (active, live yield) | v1 `usdc-defindex-idle` (kept for comparison) |
+|---|---|---|
+| `lotus_vault` | [`CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG`](https://stellar.expert/explorer/testnet/contract/CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG) | [`CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6`](https://stellar.expert/explorer/testnet/contract/CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6) |
+| Receipt asset (classic, SAC admin = the contract) | `lUSDCb`, issuer `GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO`, SAC `CC6YDSEJRF7QH5JL7MVEYEIU3CTMNEHS4XIK5R36DYA5EVUYIP4PAHPG` | `lUSDC`, issuer `GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6`, SAC `CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV` |
+| DeFindex vault | `CDCIDX5FXOENXW4ODR2D7QMRKL4F2NTZYFVZEFF63GTNRVVDXLCQ7EEC` (ours, "Lotus USDC Blend", seeded into the Blend strategy, vault fee 0) | `CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN` (PaltaLabs testnet vault, strategy allocation 0: deposits stay idle) |
+| Yield | real Blend supply interest, about 6.9 percent APR observed over a 34 minute window on 25 October 2026 | none |
+
+Shared by both: underlying Blend testnet USDC (`USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56`, SAC `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU`), Blend strategy `CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY`, Blend pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` (TestnetV2). Testnet USDC comes from the Blend testnet faucet (recipe in `deployments/testnet.contract.json`, `notes`).
+
+Why v1 earns nothing: DeFindex invests a deposit in proportion to the vault's existing allocation and skips an asset with nothing invested yet, so a vault that was never seeded stays idle, and only its rebalance manager can seed it. For v2 we created our own DeFindex vault through the testnet factory and seeded it with one `rebalance`; every later deposit is invested in full.
+
+| Demo account | Address |
 |---|---|
-| `lotus_vault` contract | [`CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6`](https://stellar.expert/explorer/testnet/contract/CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6) |
-| Receipt asset `lUSDC` (classic) | issuer `GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6`, SAC `CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV` (SAC admin = `lotus_vault`) |
-| Underlying (Blend testnet USDC) | `USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56`, SAC `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU` |
-| DeFindex vault (USDC) | `CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN` (Blend strategy `CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY`) |
-| Blend pool | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` (TestnetV2) |
-| Keeper | `GD5UIZDBCBFKRESNOXR6SGLZKMU62TT6UWL2MHN546QQJNDUM3IYZZQM` |
-| LBOND asset (code, issuer) | see `deployments/testnet.classic.json` (issuer account: `rwa_issuer` below) |
-| `rwa_issuer` (demo) | `GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF` |
-| `maker` (demo) | `GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV` |
-| `taker` (demo) | `GAEC3F4ZKGYV4QPTBKN2TTRNQ5SEUAZRNE7AXFQPB4UWMWC4JYW36SI7` |
-| `peg_lp` (demo) | `GANIQO23R5TLEYAGHCARVGXSLFI4ET27R4TCIOHC7MDQAWZB3LDRCMBH` |
-| `blocked_taker` (demo) | see `deployments/testnet.classic.json` |
+| `rwa_issuer` (LBOND issuer) | `GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF` |
+| `maker` | `GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV` |
+| `taker` | `GAEC3F4ZKGYV4QPTBKN2TTRNQ5SEUAZRNE7AXFQPB4UWMWC4JYW36SI7` |
+| `peg_lp` | `GANIQO23R5TLEYAGHCARVGXSLFI4ET27R4TCIOHC7MDQAWZB3LDRCMBH` |
+| `blocked_taker` | see `deployments/testnet.classic.json` |
 
-Demo account addresses were copied from `testnet.classic.json` on 25 October 2026 (funded by friendbot). If the files and this table disagree, the files win.
+If the files and these tables disagree, the files win.
 
-Testnet USDC comes from the Blend testnet faucet (the recipe is in `deployments/testnet.contract.json`, `notes`).
-
-Smoke test on testnet (deposit, redeem, simulated yield, capped distribution): [`1307e6bf`](https://stellar.expert/explorer/testnet/tx/1307e6bf3456549c07752ecef45baea992c7e1ca185cc2eded98fd79b5a4624f), [`d1ec0985`](https://stellar.expert/explorer/testnet/tx/d1ec09856788d1c97f86c9624f130af0b20c52386cbb021ec73be7f44414f985), [`042c1ca7`](https://stellar.expert/explorer/testnet/tx/042c1ca78d62fba596bfa078fc09fe515e10e662b1cabca12cba5e31f4201131), [`d094e1b6`](https://stellar.expert/explorer/testnet/tx/d094e1b6c5dd289bae259cd5ff1f4b4d205c491876ae73d304e43ea9141a8353). An over-cap distribution was rejected with `ExceedsCap`.
-
-**Testnet caveat.** At deployment time the DeFindex testnet USDC vault kept all deposits idle (strategy allocation 0), so testnet deposits do not reach Blend yet and earn nothing on their own. The demo shows yield by sending USDC to the contract, which raises `surplus()` exactly as accrued interest would. The contract path is the same once the vault manager allocates to the Blend strategy.
+Verification on testnet: v1 smoke test (deposit, redeem, yield simulated by a USDC donation, capped distribution) [`1307e6bf`](https://stellar.expert/explorer/testnet/tx/1307e6bf3456549c07752ecef45baea992c7e1ca185cc2eded98fd79b5a4624f), [`d1ec0985`](https://stellar.expert/explorer/testnet/tx/d1ec09856788d1c97f86c9624f130af0b20c52386cbb021ec73be7f44414f985), [`042c1ca7`](https://stellar.expert/explorer/testnet/tx/042c1ca78d62fba596bfa078fc09fe515e10e662b1cabca12cba5e31f4201131), [`d094e1b6`](https://stellar.expert/explorer/testnet/tx/d094e1b6c5dd289bae259cd5ff1f4b4d205c491876ae73d304e43ea9141a8353) (an over-cap distribution was rejected with `ExceedsCap`). v2 end to end with real interest: deposits of 100, 50 and 100 USDC were fully invested, a `distribute` minted real interest pro rata, and a redeem of 50 `lUSDCb` paid exactly 50 USDC through the Blend withdrawal; transaction hashes are in `deployments/testnet.contract.v2.json`.
 
 ## Measured on testnet
 
 - A withdraw from a DeFindex Blend strategy (measured by calling the strategy directly) used about 3.5M CPU instructions of the 400M per-transaction limit and touched 13 ledger entries of the 200 allowed.
-- Those Blend-touching transactions cost around 100 XLM in fees on testnet. The cause was not isolated; ledger-entry rent is the likely driver. Mainnet cost has not been measured.
-- The contract's own deposit and redeem, with the vault holding funds idle, cost 0.002 to 0.04 XLM.
+- Through our own vault, Blend-touching calls cost between 0.0015 and 0.14 XLM (deposit of 100 USDC 0.037, redeem 0.0034, distribute to two holders 0.0015). An earlier single measurement of about 100 XLM on a PaltaLabs vault did not reproduce and its cause was not isolated. Mainnet cost has not been measured.
+- Observed yield of v2 over two windows totalling about 34 minutes: gross Blend rate 6.914 percent APR (growth of the pool's `b_rate`), net to Lotus holders 6.85 percent with a 1 percent vault fee and 6.91 percent with the fee at 0. That rate follows Blend's utilization on testnet (88.7 percent during the measurement; at 70 percent the rate model gives about 1.6 percent), so it is an observation, not a forecast. BLND emissions are not included.
 
 ## Limitations
 
 - Redemption at par depends on Blend having liquidity to withdraw. If the pool is fully utilized, redemption waits; the peg book would then trade at a discount until liquidity returns.
 - The `USDC/lUSDC` peg book needs a liquidity provider. In the demo that is us.
 - Distribution is triggered off-chain by a keeper. The cap is enforced on-chain, so the keeper can only delay or omit, never steal. A holder who redeems between distributions forfeits the yield accrued since the last one to the remaining holders.
-- Fees for Blend-touching operations are high on testnet (see above). Mainnet behaviour is unmeasured.
+- The yield rate is whatever Blend pays at the time, driven by utilization; the figure above is an observation. Mainnet cost and rates are unmeasured.
 - Yield accrues on the quote leg (lUSDC) only. The asset leg earns whatever it earns on its own (for USDY or a Stablebond, that is the issuer's yield).
 - Aquarius already runs concentrated-liquidity pools on Soroban. Lotus does not compete on ranges; it targets the orderbook and the capital that sits in it.
 - On testnet the lUSDC issuer key is kept for recovery. On mainnet it would be locked after `set_admin`, so that the contract is the only possible minter.

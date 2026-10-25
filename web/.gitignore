@@ -30,8 +30,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (see the explicit rules at the bottom)
 
 # vercel
 .vercel
@@ -39,3 +38,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# env files: never commit keys. .env.example is the only tracked one.
+.env
+.env*.local
+
+# local test output
+/.screenshots/
+/e2e/results/
+/test-results/
+/playwright-report/
+
+# alternate dist dirs (NEXT_DIST_DIR)
+/.next-*/

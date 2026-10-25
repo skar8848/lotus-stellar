@@ -1095,6 +1095,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lotus_pool"
+version = "0.0.0"
+dependencies = [
+ "mock_vault",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "lotus_vault"
 version = "0.0.0"
 dependencies = [

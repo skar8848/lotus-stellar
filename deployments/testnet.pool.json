@@ -1,0 +1,190 @@
+{
+  "network": "testnet",
+  "rpc": "https://soroban-testnet.stellar.org",
+  "horizon": "https://horizon-testnet.stellar.org",
+  "passphrase": "Test SDF Network ; September 2015",
+  "abi": "docs/pool-abi.md",
+  "abi_version": 1,
+  "updated_at": "2026-10-25T21:49:03Z",
+  "pools": [
+    {
+      "id": "lbond-usdc-idle",
+      "label": "LBOND / USDC (idle USDC)",
+      "status": "live",
+      "contract": "CDOXTKGMK7MHEIOVXN5OBETMFUQATRQCB5NHFBFKCVUF5OUHQHVTN6CF",
+      "base": {
+        "code": "LBOND",
+        "issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF",
+        "sac": "CAVDLKQ2T4XBIQNY2WBUZKWQM6YDQ6NVX2N3HQ3P5Z2SBQ3VNZCBVBKE"
+      },
+      "quote": {
+        "code": "USDC",
+        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+        "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+      },
+      "vault": null,
+      "strategy_id": null,
+      "bin_step_bps": 10,
+      "fee_bps": 10,
+      "max_bins_per_swap": 100,
+      "supports_two_way": false,
+      "admin": "GB6ES7XBQNYO2GABLPBJYORTXPWRTKEJJCJYH6GXG7BBS5ULMKPUXH4D",
+      "wasm_hash": "4543b20eb2b9b91e5729583a229de77d7c2ec8f7ce99eba2717f8cc5d99820be",
+      "deploy_txs": {
+        "lbond_sac_deploy": "98f4d7eab03c9349a3917764a2a9744b269e767d64ac0cf9383f9b7a74fd1363",
+        "pool_deploy": "7fe8510f87b356be4a16a32980c04aefd9db6d3834efe80df7553f0a80f40c19",
+        "pool_authorized_for_lbond": "6efa3d49041ed33ba10f87a7215433c48b3e766de33917032aeeefffe7f23689",
+        "set_max_bins_per_swap_100": "b825730c581e3288144fa8c4a1e1383c5c03a4b224ba459939889a5e9dfa27d0"
+      },
+      "smoke_test_txs": [
+        {
+          "step": "maker add_position Ask: 100 LBOND over bins 0..4 (position 1)",
+          "tx": "93c98dad5e99d154c983f6ba63b93b6fb71c662692a5e020d0a66d8ac6e2db31"
+        },
+        {
+          "step": "taker swap buy_base: 50 USDC budget -> 49.9102195 LBOND across 3 bins",
+          "tx": "6b7a14d6ee7e4e5c4c5b0934495c3a077f929a394a7e3c3dbc7a8ab7d480cece"
+        },
+        {
+          "step": "maker claim (position 1): 50.0 USDC = proceeds + fees",
+          "tx": "a4e92e4ae60feed3b5b8947c7704f05a2dd4d3ee8e82dce3b1acc5a93ec5bf8c"
+        },
+        {
+          "step": "maker remove_position (position 1): 50.0897805 unfilled LBOND returned",
+          "tx": "2fbdc006ba49bda7a9f5622aeeba982b767f94dff19407d862bdf278a55bd890"
+        },
+        {
+          "step": "maker add_position Bid: 100 USDC over bins -10..-1 (position 2)",
+          "tx": "11caeb7ce56cfd13581564db4b0f7b151ec1cb7e820b50b450597c60fd266e43"
+        },
+        {
+          "step": "taker swap sell: 25 LBOND -> 24.9301546 USDC across 3 bins",
+          "tx": "c962d974ae31063f3c33197a5a73a1d1246d5d0741eb625462b40cb01c8f5ee0"
+        },
+        {
+          "step": "maker claim (position 2): 25 LBOND + 0.0249554 USDC fees",
+          "tx": "cb92555fc7f2539ded98aa28e3a342df12e415e2c6fc6dcef6c18988ce5ea1c0"
+        },
+        {
+          "step": "maker remove_position (position 2): 75.04489 unfilled USDC returned",
+          "tx": "cfa033093cefd88e260d8b01aac876a1c8820aa9b0830acb28c2f17f908a85ec"
+        }
+      ],
+      "notes": "Stage A+B build (directional asks and bids, QUOTE idle in the pool, no DeFindex vault). LBOND is AUTH_REQUIRED: the issuer authorised this contract with SAC set_authorized (tx pool_authorized_for_lbond); before that call the SAC rejects any transfer to it ('balance is deauthorized'). Takers and makers still need an authorized LBOND trustline. max_bins_per_swap was raised from 25 to 100 by the admin after measuring (94-bin swaps succeed on-chain).",
+      "measurement_txs": {
+        "buy_2_bins_fee_0.0018_xlm": "39cc28f8968b520d1c33063b00168879e6a1fd8aaa40bd00ff727093997cab15",
+        "buy_6_bins_fee_0.0025_xlm": "98b139d0b9518d977572cf73f57ffa7abc54f35f94e648ffdbb6e141282b82c1",
+        "buy_20_bins_fee_0.0049_xlm": "342ca8c59710f167fddc8a99426aefb08a4b92cf30c3bc834c92790e6f5154ec",
+        "buy_79_bins_fee_0.0155_xlm": "be7c3ccaa481fa46c3b092f6db29fdab751218f68169821232beb3296ce82083",
+        "sell_20_bins_fee_0.0050_xlm": "77da75da8579960f2812939235b3a224ede4d6b67c18dc75312540264e67f1dc",
+        "sell_94_bins_fee_0.0182_xlm": "f68be51bf632cc58c12ff6659fec05cbb1cec27d7414c5733c60e25287c3953a"
+      },
+      "demo_book": {
+        "owner": "GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV (maker)",
+        "positions": [
+          {
+            "id": 18,
+            "side": "Ask",
+            "bins": "0..39",
+            "amount": "800 LBOND",
+            "tx": "a9926ab68b50326bc8560afa966353540b5f1f4db1c362b3d1bcf9c181c3529b"
+          },
+          {
+            "id": 19,
+            "side": "Bid",
+            "bins": "-40..-1",
+            "amount": "400 USDC",
+            "tx": "bf87840ed4a2b303a23a55797ee283f7a3e6b346a7343093e9fc2a7b07b1b69d"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lbond-usdc-defindex",
+      "label": "LBOND / USDC (USDC in DeFindex -> Blend)",
+      "status": "live",
+      "contract": "CDNG7T2KSDQ7ZYXHSDAM63RLLVPCQ5V6T5GRTXOOX47EZEMU636ZFPNG",
+      "base": {
+        "code": "LBOND",
+        "issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF",
+        "sac": "CAVDLKQ2T4XBIQNY2WBUZKWQM6YDQ6NVX2N3HQ3P5Z2SBQ3VNZCBVBKE"
+      },
+      "quote": {
+        "code": "USDC",
+        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+        "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+      },
+      "vault": "CDCIDX5FXOENXW4ODR2D7QMRKL4F2NTZYFVZEFF63GTNRVVDXLCQ7EEC",
+      "strategy_id": "usdc-defindex-blend",
+      "bin_step_bps": 10,
+      "fee_bps": 10,
+      "max_bins_per_swap": 100,
+      "supports_two_way": false,
+      "admin": "GB6ES7XBQNYO2GABLPBJYORTXPWRTKEJJCJYH6GXG7BBS5ULMKPUXH4D",
+      "wasm_hash": "c1a81eaec9e5acc3986c84a30fbf37511d368b99ad1d5723e418f5e51cd39107",
+      "deploy_txs": {
+        "pool_deploy": "85169d5695d0a4ffff81bed87b051270e9abd74249a8cddd118a22eb289da310",
+        "pool_authorized_for_lbond": "da883229f02b7ce519e8ff3d21f1f2d5f202ca1695c8e913c99243f759389437"
+      },
+      "smoke_test_txs": [
+        {
+          "step": "maker add_position Bid: 100 USDC over bins -10..-1 (position 1): one DeFindex deposit",
+          "tx": "a6066cfe4f74d23a3d3bf62461fd59d8d836f0e10a9c2a19b3b368113f66faee"
+        },
+        {
+          "step": "maker add_position Ask: 100 LBOND over bins 0..9 (position 2): no vault call",
+          "tx": "2a2963aee30b1586be0b00181927677fcc45d0511ddf2c93c4760231f094c1a8"
+        },
+        {
+          "step": "taker swap buy_base: 30 USDC budget, 3 bins: exactly one DeFindex deposit",
+          "tx": "931081e2359228f6d8355be90f7eeb8ddb713c00bed580f6be0be48d7eb8b161"
+        },
+        {
+          "step": "taker swap sell: 20 LBOND, 2 bins: one price query (read-only) + one DeFindex withdrawal",
+          "tx": "66772c2a98e472a20303fdbfd12049ded0441df1467006c50e3aa9c2d4367e36"
+        },
+        {
+          "step": "maker claim Ask (position 2): paid 30.0000051 USDC for 30.0 USDC taker input (Blend yield)",
+          "tx": "9ce83c665aa0b14f0245540f23439a5d235fa89431a038a28c74e3445ab4d606"
+        },
+        {
+          "step": "maker claim Bid (position 1): 19.9999998 LBOND + fee shares",
+          "tx": "a9c798737ea41e5a35713eae1eed69bfed28457d4e257748188ecf9472fa464e"
+        },
+        {
+          "step": "maker remove_position Ask (position 2)",
+          "tx": "ccbb8dbb284e80b56b223588c376290dcf7069230e0c6b404c2ec698570b97f5"
+        },
+        {
+          "step": "maker remove_position Bid (position 1): 80.0299776 USDC for 80.0299697 shown (yield)",
+          "tx": "7a840eeaceb1e8f8367ee5073655b5d2da031462ef93c1f077b8e4bf5c994c6d"
+        }
+      ],
+      "notes": "Stage C build: every QUOTE-denominated balance (bid inventory, ask proceeds, fees) is held as shares of OUR DeFindex vault (Lotus USDC Blend, status live in testnet.strategies.json, entry usdc-defindex-blend; real Blend yield, about 6.9 percent APR observed) and accounted in shares, so it earns yield while it waits; a taker's swap recalls it just in time. Vault calls per swap (verified in the transaction diagnostic events): buy = 1 deposit; sell = 1 read-only get_asset_amounts_per_shares + 1 withdraw. Same LBOND authorisation as the idle pool (tx pool_authorized_for_lbond). IMPORTANT for clients: quote_swap (sell side), get_position, get_bin (Bid), depth (Bid) and tvl call DeFindex get_asset_amounts_per_shares, which updates a fee report inside the vault: always run them with simulateTransaction and never submit them as transactions (the stellar CLI auto-submits when the simulation is not read-only: pass --send=no).",
+      "measurement_txs": {
+        "buy_6_bins_fee_0.0050_xlm": "833d0ebb14b3927c67579a000cb7a577ca61c4a31c5a08ddf477557e5310e27a",
+        "buy_20_bins_fee_0.0074_xlm": "de2a2db8a2fac40c9952ad03f5973ee18124e4384e15ce4ed845cf174d88b50b",
+        "sell_100_bins_fee_0.0218_xlm": "3b3ea7f177842f6e787b1a6a0a998ebf6c5dfd6f17ec62305cfb4e87c0519ae1"
+      },
+      "demo_book": {
+        "owner": "GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV (maker)",
+        "positions": [
+          {
+            "id": 9,
+            "side": "Ask",
+            "bins": "0..39",
+            "amount": "400 LBOND",
+            "tx": "17104ba010b91ac47acb97e53f175bcc01db535949dec5e1a8dd420959134eeb"
+          },
+          {
+            "id": 10,
+            "side": "Bid",
+            "bins": "-40..-1",
+            "amount": "400 USDC (held as DeFindex shares, earning Blend yield)",
+            "tx": "4f7bc942cf9496c7733d873d50ce673773d41835b010291543e7233a1b8422aa"
+          }
+        ]
+      }
+    }
+  ]
+}

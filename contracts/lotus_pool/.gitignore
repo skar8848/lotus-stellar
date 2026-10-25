@@ -1,0 +1,2 @@
+# host-test snapshots are regenerated on every `cargo test`
+test_snapshots/

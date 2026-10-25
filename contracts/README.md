@@ -84,7 +84,8 @@ Known limits (hackathon scope):
 
 * The receipt **issuer account is not locked**: it can still issue `lUSDC` through classic payments. In production set its master weight to 0 after `set_admin`, so the contract becomes the only possible minter.
 * `distribute` aborts entirely if any recipient cannot receive the mint (no trustline, trustline limit, deauthorized). The keeper must filter the holder list.
-* `vault_value()` relies on DeFindex `get_asset_amounts_per_shares`, which only reflects Blend interest as of the last pool interaction. The 1-stroop rounding of DeFindex share maths right after a deposit makes `vault_value()` temporarily `supply() - 1`, so a redeem in that window pays 1 stroop less than 1:1.
+* `vault_value()` relies on DeFindex `get_asset_amounts_per_shares`. Measured on a Blend-backed vault (v2, 2026-10-25) it is **not stale**: the Blend strategy reads `pool.get_reserve`, which accrues interest to the current ledger timestamp, so `vault_value()` moves every ledger with no pool interaction (about +98 stroops per 45 s on 100 USDC at a 6.9% supply rate). It is also **net of the DeFindex vault fee**: DeFindex re-reports on every call and subtracts the locked fee plus the fee on gains not yet locked (verified exactly, 0 stroops of difference on every same-ledger sample; `fetch_total_managed_funds` only subtracts the already-locked part, so it is a few stroops higher). That report update gives `vault_value()` and `surplus()` a one-entry write footprint, so read them with a simulation (`--send=no`, or `simulateTransaction`), never submit them. The 1-stroop rounding of DeFindex share maths right after a deposit makes `vault_value()` temporarily `supply() - 1`, so a redeem in that window pays 1 stroop less than 1:1.
+* DeFindex caveat for vault operators (not a Lotus bug): `rebalance`, `rescue` and `distribute_fees` pay the locked vault fee out first, 20% of it to the factory's protocol receiver. On testnet that receiver (`GDOFDSMF...`, PaltaLabs) has **no USDC trustline**, so these three calls revert with "trustline entry is missing" as soon as the vault has a locked fee > 0 (`deposit` and `withdraw`, hence Lotus `deposit`/`redeem`/`distribute`, are unaffected). The v2 vault therefore runs with `vault_fee = 0`; see `deployments/README.md`.
 * No pause / upgrade / emergency exit, no fee switch.
 
 ## Build and test
@@ -154,3 +155,22 @@ The CLI simulates every call and builds the auth tree (`from` signs `deposit` + 
 | deposit/withdraw when the Blend strategy is active | measured earlier the same day | ~90-100 XLM | ~3.5M CPU instructions, ~13 ledger entries; the fee is almost entirely ledger rent on testnet. Avoid the `blend-v2.1` strategies (one simulated deposit quoted 23,584 XLM) |
 
 Friendbot funds 10k XLM per account, enough for ~100 Blend-touching operations.
+
+### Measured costs with the Blend strategy actually invested (v2, testnet, 2026-10-25)
+
+Second deployment: Lotus `CCCZ6XUD...` on our own DeFindex vault `CDCIDX5F...`, seeded into the Blend USDC strategy. The "~90-100 XLM" row above was **not reproduced**: every Blend-touching call below cost under 0.15 XLM (the largest figure is the first deposit into a fresh vault, which creates ledger entries). Fees are `feeCharged`; CPU is the host's `core_metrics.cpu_insn` of the executed transaction (limit 400M).
+
+| op | tx | fee (XLM) | CPU (instructions) |
+|---|---|---|---|
+| factory `create_defindex_vault` | `7568e866...` | 0.0366 | 2.9M |
+| vault `deposit` 1000 USDC, `invest=false` (first deposit, creates entries) | `51875aa8...` | 0.1433 | 2.3M |
+| vault `rebalance` `Invest` 1000 USDC into the Blend strategy | `c72d8224...` | 0.0037 | 5.1M |
+| vault `deposit` 10 USDC, `invest=true` (auto-invests, direct) | `c20896d8...` | 0.0505 | 7.1M |
+| vault `withdraw` (unwinds from Blend, direct) | `05c1232e...` | 0.0025 | 6.6M |
+| Lotus `deposit` 100 USDC (first deposit of this account) | `8c3584f3...` | 0.0373 | 8.1M |
+| Lotus `deposit` 50 USDC | `1da1629a...` | 0.0037 | 8.1M |
+| Lotus `distribute` 2 recipients, real surplus | `95716ece...` | 0.0015 | 4.7M |
+| Lotus `redeem` 50 lUSDCb (Blend withdraw) | `c21698aa...` | 0.0034 | 14.1M |
+| Lotus `redeem` full position of the second holder | `7ec13f1f...` | 0.0034 | 14.0M |
+
+Views: `vault_value()` / `surplus()` simulate at about 4.4M instructions (they walk vault -> strategy -> Blend pool), `supply()` at 0.5M.

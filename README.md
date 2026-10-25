@@ -163,7 +163,7 @@ Verification on testnet: v1 smoke test (deposit, redeem, yield simulated by a US
 
 - Redemption at par depends on Blend having liquidity to withdraw. If the pool is fully utilized, redemption waits; the peg book would then trade at a discount until liquidity returns.
 - The `USDC/lUSDC` peg book needs a liquidity provider. In the demo that is us.
-- Distribution is triggered off-chain by a keeper. The cap is enforced on-chain, so the keeper can only delay or omit, never steal. A holder who redeems between distributions forfeits the yield accrued since the last one to the remaining holders.
+- Distribution is triggered off-chain by a keeper. The cap is enforced on-chain, so the keeper can only delay or omit, never steal. A holder who redeems between distributions forfeits the yield accrued since the last one to the remaining holders, and the mirror image holds: someone who deposits just before a distribution and redeems right after captures a pro-rata share of interest they did not earn. This is a known weakness of distributing by minting to current balances; the roadmap fix is an exchange-rate token (share-price accounting), and until then the keeper should run often.
 - The yield rate is whatever Blend pays at the time, driven by utilization; the figure above is an observation. Mainnet cost and rates are unmeasured.
 - Yield accrues on the quote leg (lUSDC) only. The asset leg earns whatever it earns on its own (for USDY or a Stablebond, that is the issuer's yield).
 - Aquarius already runs concentrated-liquidity pools on Soroban. Lotus does not compete on ranges; it targets the orderbook and the capital that sits in it.

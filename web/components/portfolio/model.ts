@@ -209,7 +209,14 @@ export type PositionUnits = { inventory: AssetRef; proceeds: AssetRef; fees: Ass
 export function positionUnits(p: Position, inst: PoolInstance): PositionUnits {
   const base: AssetRef = { code: inst.base.code, issuer: inst.base.issuer };
   const quote: AssetRef = { code: inst.quote.code, issuer: inst.quote.issuer };
+  // two-way: inventory = BASE held now, pending_proceeds = QUOTE held now (reserves), fees = QUOTE
+  if (p.mode === "TwoWay") return { inventory: base, proceeds: quote, fees: quote };
   return p.side === "Ask" ? { inventory: base, proceeds: quote, fees: quote } : { inventory: quote, proceeds: base, fees: quote };
+}
+
+/** The asset a position was funded with (Ask = BASE, Bid = QUOTE), in both modes. */
+export function depositAsset(p: Position, inst: PoolInstance): AssetRef {
+  return p.side === "Ask" ? { code: inst.base.code, issuer: inst.base.issuer } : { code: inst.quote.code, issuer: inst.quote.issuer };
 }
 
 const stroopsNum = (v: bigint) => Number(fromStroops(v));

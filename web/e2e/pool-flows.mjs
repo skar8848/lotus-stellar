@@ -90,8 +90,14 @@ async function flow(name, fn) {
   return r;
 }
 
-async function addPosition(page, side, amount) {
+async function addPosition(page, side, amount, twoWay = false) {
   await page.click('[data-testid="pool-tab-add"]');
+  if (twoWay) {
+    const btn = page.locator('[data-testid="pool-mode-twoway-btn"]');
+    if (await btn.isDisabled()) throw new Error("Two-way LP switch is disabled on this instance: " + (await page.locator('[data-testid="pool-twoway-why"]').innerText().catch(() => "")));
+    await btn.click();
+    await page.waitForSelector('[data-testid="pool-twoway-note"]');
+  }
   await page.click(`[data-testid="pool-side"] [data-value="${side}"]`);
   await page.fill('[data-testid="pool-amount"]', String(amount));
   await page.waitForTimeout(600);
@@ -115,6 +121,53 @@ async function swap(page, dir, amount) {
 
 const positionIds = async (page) =>
   (await page.locator('[data-testid="pool-position-row"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-position-id")))).map(Number);
+
+if (process.env.TWOWAY === "1") {
+  // ---- two-way round trip: add, swap through it one way, swap back, claim fees, remove
+  results.length = 0;
+  let twId = null;
+  const holdings = async (page, id) => (await page.locator(`[data-position-id="${id}"] [data-testid="twoway-holdings"]`).innerText()).replace(/\s+/g, " ");
+  await flow("twoway-add-position", async (page, r) => {
+    await connect(page, "maker");
+    r.txHashes.push(...(await addPosition(page, "Ask", 5, true)));
+    twId = Number(lastResult);
+    await page.waitForSelector(`[data-position-id="${twId}"]`, { timeout: 30000 });
+    const mode = await page.locator(`[data-position-id="${twId}"] [data-testid="position-mode"]`).innerText();
+    if (!/two-way/.test(mode)) throw new Error("position row does not show the two-way mode: " + mode);
+    r.checks.push({ newPositionId: twId, holdings: await holdings(page, twId) });
+  });
+  await flow("twoway-swap-buy-through", async (page, r) => {
+    await connect(page, "taker");
+    r.txHashes.push(...(await swap(page, "buy", 2)));
+  });
+  await flow("twoway-swap-back-sell", async (page, r) => {
+    await connect(page, "taker");
+    r.txHashes.push(...(await swap(page, "sell", 1)));
+  });
+  await flow("twoway-claim-fees", async (page, r) => {
+    if (twId === null) throw new Error("skipped: no two-way position");
+    await connect(page, "maker");
+    r.checks.push({ holdingsBefore: await holdings(page, twId) });
+    const btn = page.locator(`[data-testid="pool-claim-${twId}"]`);
+    if (await btn.isDisabled()) throw new Error("Claim disabled: no fees accrued");
+    await btn.click();
+    r.txHashes.push(...(await success(page, '[data-testid="pool-tab"]')));
+  });
+  await flow("twoway-remove", async (page, r) => {
+    if (twId === null) throw new Error("skipped: no two-way position");
+    await connect(page, "maker");
+    await page.click(`[data-testid="pool-remove-${twId}"]`);
+    r.txHashes.push(...(await success(page, '[data-testid="pool-tab"]')));
+    await page.waitForTimeout(4000);
+    if ((await positionIds(page)).includes(twId)) throw new Error("position still listed after removal");
+  });
+  await browser.close();
+  const out2 = path.join(resultsDir, `pool-twoway-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  fs.writeFileSync(out2, JSON.stringify({ mode, pool: process.env.POOL, results }, null, 2));
+  console.table(results.map((r) => ({ flow: r.name, status: r.status, tx: r.txHashes.join(",").slice(0, 70), error: r.error ?? "" })));
+  console.log("results:", out2);
+  process.exit(results.every((r) => r.status === "passed") ? 0 : 1);
+}
 
 let askId = null;
 let bidId = null;

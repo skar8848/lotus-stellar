@@ -2,7 +2,7 @@
 
 The Lotus pool is a Soroban range pool, directional by design. It is NOT replaced by the receipt token: both exist.
 
-- `lotus_pool` (this document): LPs place liquidity on a price grid of bins. A directional position can never trade back: inventory only goes down, proceeds only go up. Optional two-way (crossback) positions are a stretch goal (see "Mode::TwoWay").
+- `lotus_pool` (this document): LPs place liquidity on a price grid of bins. A directional position can never trade back: inventory only goes down, proceeds only go up. Optional two-way (crossback) positions exist on pools without a vault (see "Mode::TwoWay").
 - `lotus_vault` (done): wraps a DeFindex vault and mints the receipt token `lUSDC`, a classic asset that trades on the SDEX.
 
 The pool and the SDEX are two venues for the same asset (LBOND). The only on-chain link is DeFindex (the pool can park its USDC leg in a DeFindex vault) and the shared assets. Arbitrage between venues is off-chain (the bot).
@@ -33,7 +33,7 @@ Integer algorithm, identical in Rust and for a BigInt port:
 
 ```rust
 enum Side { Ask, Bid }       // Ask: sells BASE as price rises. Bid: buys BASE as price falls.
-enum Mode { Directional, TwoWay }   // TwoWay: see "Mode::TwoWay"
+enum Mode { Directional, TwoWay }   // TwoWay: pools without a vault only, see "Mode::TwoWay"
 
 struct Config   { admin, base, quote, vault: Option<Address>, bin_step_bps: u32, fee_bps: u32, max_bins_per_swap: u32, supports_two_way: bool }
 struct BinView  { side: Side, bin: i32, price: i128, inventory: i128, total_shares: i128, filled: i128 }
@@ -105,7 +105,7 @@ Fee and fill rules (exact, for client-side quoting): see "Fees and rounding" in 
 | 7 | NotOwner | claim/remove by an address that is not the owner |
 | 8 | NoLiquidity | the swap would move nothing |
 | 9 | SlippageExceeded | amount_out < min_out |
-| 10 | NotImplemented | `Mode::TwoWay` where unsupported |
+| 10 | NotImplemented | `Mode::TwoWay` on a pool whose `supports_two_way` is false (it has a vault, or it is a stage A-C build) |
 | 11 | Overflow | arithmetic overflow |
 | 12 | AmountTooSmall | a bin would get < 0.001 unit or too little to mint a share |
 | 13 | BinDust | the bin is almost fully filled (remaining < 1e-6 of its shares): use another bin |
@@ -118,7 +118,7 @@ Authorization failures are host `Auth` errors, not contract errors.
 
 | topics | data |
 |---|---|
-| `["position_added", owner]` | `id: u64, side: Side, lo_bin: i32, hi_bin: i32, amount: i128` |
+| `["position_added", owner]` | `id: u64, side: Side, lo_bin: i32, hi_bin: i32, amount: i128` (the event does not carry the mode: read `get_position(id).mode`) |
 | `["position_removed", owner]` | `id: u64, base: i128, quote: i128` |
 | `["claimed", owner]` | `id: u64, base: i128, quote: i128` (not emitted when nothing is paid) |
 | `["swap", taker]` | `buy_base: bool, amount_in: i128` (pulled from the taker), `amount_out: i128` (sent to the taker), `fee: i128` (QUOTE), `bins_crossed: u32, last_bin: i32` |
@@ -128,7 +128,7 @@ Token `transfer` events of the two SACs are emitted as well (pool <-> account).
 ## Rules and invariants (all unit-tested, see the crate README)
 
 1. Directional: per bin, `inventory` never increases after a fill, `filled` never decreases, proceeds and fees accumulators never decrease. Proceeds are never re-offered as liquidity.
-2. Solvency: pool token balances (plus vault shares at current value) are always at least the sum of remaining inventory plus all pending claims. Tested after every operation of a pseudo-random sequence of adds, swaps, claims, removals and vault yield.
+2. Solvency: pool token balances (plus vault shares at current value) are always at least the sum of remaining inventory plus all pending claims. Tested after every operation of pseudo-random sequences of adds, swaps, claims and removals (idle, two-way, and vault pools with yield and loss injected while positions are open); see "Known limitations from review" in the crate README for what the pool does not protect against.
 3. Rounding always favors the pool; no payout exceeds what the position is owed (at most about 1 stroop per bin per fill or claim stays in the pool as dust).
 4. Fees: `fee_bps` of the QUOTE price leg of each fill, credited to the bin's LPs pro rata to bin shares (same accumulator mechanism as proceeds).
 5. Per-bin accounting is share based: `total_shares` per bin, `shares` per position per bin, accumulators `proceeds_per_share` and `fees_per_share` (internal scale 1e18, was drafted as 1e12); a late depositor into a partly filled bin must not steal earlier proceeds. A fully filled bin that is reused starts a new generation.
@@ -147,7 +147,9 @@ Token `transfer` events of the two SACs are emitted as well (pool <-> account).
 
 ## Mode::TwoWay
 
-`add_position(..., Mode::TwoWay, ...)` returns `Error::NotImplemented` and `Config.supports_two_way` is false, unless the deployed build says otherwise in `deployments/testnet.pool.json` (`supports_two_way: true` is only set for an instance whose tests are in the repo). See the crate README for the stage D status.
+Available when `Config.supports_two_way` is true (pools without a vault, stage D build: `lbond-usdc-twoway`). A two-way position rests on both sides of each bin's price (DLMM style): the bin holds a BASE reserve that is for sale at the bin price and a QUOTE reserve that bids for BASE at the same price. A buyer's QUOTE lands in the QUOTE reserve, a seller's BASE in the BASE reserve, so the price coming back through the bin refills it. `add_position(owner, side, TwoWay, lo, hi, amount, weights)`: `side` = the asset deposited (`Ask` = BASE for bins above the market, `Bid` = QUOTE for bins below it); amounts, weights, limits and errors as for directional positions.
+
+Fields of a two-way `Position`: `inventory` = BASE held now, `pending_proceeds` = QUOTE held now (reserves, only `remove_position` pays them out), `pending_fees` = claimable fees (QUOTE), `filled` = BASE traded through the position's bins in either direction, `deposited` = the amount put in. `claim` pays fees only (`PositionPayout.base` is 0); `remove_position` pays the position's slice of both reserves plus fees. Directional and two-way liquidity share the book (directional first at each price); `get_bin` / `depth` include the two-way reserve in `inventory`. Details and limits: `contracts/lotus_pool/README.md`, "Two-way mode".
 
 ## Deployments
 
@@ -159,14 +161,15 @@ Token `transfer` events of the two SACs are emitted as well (pool <-> account).
   "base":{"code":"LBOND","issuer":"G...","sac":"C..."},"quote":{"code":"USDC","issuer":"G...","sac":"C..."},
   "vault":null,"strategy_id":null,"bin_step_bps":10,"fee_bps":10,"max_bins_per_swap":100,"supports_two_way":false,
   "admin":"G...","wasm_hash":"...","deploy_txs":{},"smoke_test_txs":[],"measurement_txs":{},"demo_book":{},"notes":"..."},
- {"id":"lbond-usdc-defindex","label":"LBOND / USDC (USDC in DeFindex -> Blend)","status":"live","contract":"C...","vault":"C...","strategy_id":"usdc-defindex-blend","...":"..."}]}
+ {"id":"lbond-usdc-defindex","label":"LBOND / USDC (USDC in DeFindex -> Blend)","status":"live","contract":"C...","vault":"C...","strategy_id":"usdc-defindex-blend","...":"..."},
+ {"id":"lbond-usdc-twoway","label":"LBOND / USDC (idle USDC, two-way LPs enabled)","status":"live","supports_two_way":true,"...":"..."}]}
 ```
 
 `strategy_id` refers to an entry of `deployments/testnet.strategies.json` when the DeFindex vault comes from one (`usdc-defindex-blend`, our own vault on the Blend USDC strategy, status live). Fields beyond the ones in the v0 draft (`rpc`, `horizon`, `passphrase`, `max_bins_per_swap`, `admin`, `wasm_hash`, `deploy_txs`, `smoke_test_txs`, `measurement_txs`, `demo_book`) are additive.
 
 ## Changes from the v0 draft
 
-- Constructor, functions, types, error semantics and events are as drafted. Added: `set_max_bins_per_swap`, `abi_version`, the error table, the event data shapes, `positions_of` cap, `depth` cap (100 bins), the amount and range limits.
+- Constructor, functions, types, error semantics and events are as drafted. `Mode::TwoWay` is implemented for pools without a vault. Added: `set_max_bins_per_swap`, `abi_version`, the error table, the event data shapes, `positions_of` cap, `depth` cap (100 bins), the amount and range limits.
 - Accumulator scale is 1e18 (drafted as 1e12); it is internal and not visible through the ABI.
 - The book index is a 401-bit bitmap per side in instance storage, not a sorted `Vec<i32>`.
 - The fee is charged on top of the price leg (buyer pays more, seller receives less); the LP keeps its exact limit price.

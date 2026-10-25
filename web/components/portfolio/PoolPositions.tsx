@@ -18,7 +18,7 @@ import { fmtAmt } from "@/lib/vault";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import type { PoolData } from "./data";
-import { positionUnits } from "./model";
+import { depositAsset, positionUnits } from "./model";
 
 /** TxStatus for on-chain actions; a simulated action (empty hash) never shows a link or says "Confirmed". */
 function ActionStatus({ state, network, onDismiss }: { state: TxState; network: string; onDismiss: () => void }) {
@@ -157,8 +157,11 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
             <tbody>
               {positions.map((p) => {
                 const u = positionUnits(p, inst);
+                const twoWay = p.mode === "TwoWay";
+                const dep = depositAsset(p, inst);
                 const filledPct = p.deposited > 0n ? (Number(p.filled) / Number(p.deposited)) * 100 : 0;
-                const claimable = p.pendingProceeds > 0n || p.pendingFees > 0n;
+                // two-way: claim pays fees only (the reserves leave with Remove)
+                const claimable = twoWay ? p.pendingFees > 0n : p.pendingProceeds > 0n || p.pendingFees > 0n;
                 const id = String(p.id);
                 return (
                   <tr key={id} className="border-t border-border align-top" data-testid="pool-position-row" data-position-id={id}>
@@ -188,17 +191,29 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
                       {priceText(p.loBin, inst.binStepBps)} to {priceText(p.hiBin, inst.binStepBps)}
                     </td>
                     <td className="num py-2 pr-2 text-right">
-                      {fmtAmt(p.deposited)} <span className="text-mutedfg">{u.inventory.code}</span>
+                      {fmtAmt(p.deposited)} <span className="text-mutedfg">{dep.code}</span>
                     </td>
-                    <td className="num py-2 pr-2 text-right">
+                    <td className="num py-2 pr-2 text-right" data-testid={twoWay ? "twoway-holdings" : undefined}>
                       {fmtAmt(p.inventory)} <span className="text-mutedfg">{u.inventory.code}</span>
+                      {twoWay ? (
+                        <div>
+                          {fmtAmt(p.pendingProceeds)} <span className="text-mutedfg">{u.proceeds.code}</span>
+                          <div className="text-[11px] text-mutedfg">both held now</div>
+                        </div>
+                      ) : null}
                     </td>
                     <td className="num py-2 pr-2 text-right">
                       {fmtAmt(p.filled)} <span className="text-mutedfg">{u.inventory.code}</span>
-                      <div className="text-[11px] text-mutedfg">{fmt(filledPct, 1)}% of deposit</div>
+                      <div className="text-[11px] text-mutedfg">{twoWay ? "traded through, both ways" : `${fmt(filledPct, 1)}% of deposit`}</div>
                     </td>
-                    <td className={cn("num py-2 pr-2 text-right", p.pendingProceeds > 0n && "text-green")}>
-                      {fmtAmt(p.pendingProceeds)} <span className="text-mutedfg">{u.proceeds.code}</span>
+                    <td className={cn("num py-2 pr-2 text-right", !twoWay && p.pendingProceeds > 0n && "text-green")}>
+                      {twoWay ? (
+                        <span className="text-mutedfg">in reserve (paid on Remove)</span>
+                      ) : (
+                        <>
+                          {fmtAmt(p.pendingProceeds)} <span className="text-mutedfg">{u.proceeds.code}</span>
+                        </>
+                      )}
                     </td>
                     <td className={cn("num py-2 pr-2 text-right", p.pendingFees > 0n && "text-green")}>
                       {fmtAmt(p.pendingFees)} <span className="text-mutedfg">{u.fees.code}</span>
@@ -226,6 +241,7 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
       {positions.length > 0 ? (
         <p className="mt-3 text-[11px] text-mutedfg">
           Directional positions only move one way: remaining inventory goes down, proceeds and fees go up and are never re-offered. Claim pays out proceeds and fees and keeps the position open; Remove also returns what is left.
+          Two-way positions trade in both directions: they hold both {inst.base.code} and {inst.quote.code} right now, so you can end up with more of either asset; Claim pays fees only and Remove pays both reserves plus fees.
         </p>
       ) : null}
     </Panel>

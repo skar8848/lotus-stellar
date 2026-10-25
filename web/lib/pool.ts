@@ -66,11 +66,18 @@ export interface PoolClient {
   depth(side: Side, fromBin: number, toBin: number): Promise<BinView[]>;
   positionsOf(owner: string): Promise<Position[]>;
   quoteSwap(buyBase: boolean, amountIn: bigint): Promise<SwapQuote>;
+  /** abi_version(): 1 for the contract this adapter targets */
+  abiVersion(): Promise<number>;
   addPosition(ctx: TxCtx, p: AddPositionParams): Promise<TxResult>;
   claim(ctx: TxCtx, id: bigint): Promise<TxResult>;
   removePosition(ctx: TxCtx, id: bigint): Promise<TxResult>;
   swap(ctx: TxCtx, buyBase: boolean, amountIn: bigint, minOut: bigint): Promise<TxResult>;
+  /** admin only (1..=100); exposed for completeness, the app never calls it */
+  setMaxBinsPerSwap(ctx: TxCtx, maxBins: number): Promise<TxResult>;
 }
+
+/** The ABI version this adapter was written against (docs/pool-abi.md). */
+export const SUPPORTED_ABI = 1;
 
 // ---------------------------------------------------------------------------
 // Encoders / decoders (the only place that knows how the ABI types look on the wire)
@@ -276,6 +283,12 @@ class LivePoolClient implements PoolClient {
   swap(ctx: TxCtx, buyBase: boolean, amountIn: bigint, minOut: bigint) {
     return this.write(ctx, "swap", [addressArg(ctx.source), boolArg(buyBase), i128Arg(amountIn), i128Arg(minOut)]);
   }
+  async abiVersion() {
+    return num(await this.view("abi_version"));
+  }
+  setMaxBinsPerSwap(ctx: TxCtx, maxBins: number) {
+    return this.write(ctx, "set_max_bins_per_swap", [nativeToScVal(maxBins, { type: "u32" })]);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +484,7 @@ class MockPoolClient implements PoolClient {
       vault: null,
       binStepBps: this.inst.binStepBps,
       feeBps: this.inst.feeBps,
-      maxBinsPerSwap: 12,
+      maxBinsPerSwap: 100,
       supportsTwoWay: false,
     };
   }
@@ -500,7 +513,14 @@ class MockPoolClient implements PoolClient {
   async quoteSwap(buyBase: boolean, amountIn: bigint): Promise<SwapQuote> {
     return this.walk(buyBase, amountIn, false);
   }
+  async abiVersion() {
+    return SUPPORTED_ABI;
+  }
+  async setMaxBinsPerSwap(): Promise<TxResult> {
+    throw new Error("admin only: not available in the local simulation");
+  }
   async addPosition(ctx: TxCtx, p: AddPositionParams): Promise<TxResult> {
+    if (p.mode === "TwoWay") throw new Error("NotImplemented (two-way positions are not available in the local simulation)");
     if (p.loBin < MIN_BIN || p.hiBin > MAX_BIN || p.hiBin < p.loBin) throw new Error("bin outside the grid");
     const pos = this.place(this.state, ctx.source, p.side, p.loBin, p.hiBin, p.amount, p.weights);
     this.save();

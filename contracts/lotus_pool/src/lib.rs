@@ -8,6 +8,13 @@
 //! inventory, Ask proceeds, fees) sits in a DeFindex vault that lends on Blend
 //! and is recalled just in time by the taker's own swap.
 //!
+//! `Mode::TwoWay` positions (pools without a vault only) rest on both sides of
+//! their bin's price: a buyer's QUOTE lands in the bin's QUOTE reserve, which
+//! then bids at the same price, so the price coming back through the bin
+//! refills it, like a DLMM bin. Directional and two-way liquidity share the
+//! book: at every price a swap takes the directional bin first, then the
+//! two-way bin.
+//!
 //! The full interface, the invariants and the deployment file shape live in
 //! `docs/pool-abi.md`; the build / deploy recipe in `contracts/lotus_pool/README.md`.
 //!
@@ -907,9 +914,8 @@ fn deposit_directional(
     amount: i128,
     total_units: i128,
 ) -> Vec<PosEntry> {
-    let env = env.clone();
-    let mut set = read_active(&env, side);
-    let mut entries: Vec<PosEntry> = Vec::new(&env);
+    let mut set = read_active(env, side);
+    let mut entries: Vec<PosEntry> = Vec::new(env);
     let mut i = 0usize;
     while i < n as usize {
         if amounts[i] == 0 {
@@ -920,16 +926,16 @@ fn deposit_directional(
         let units = if total_units == amount {
             amounts[i]
         } else {
-            mul_div(&env, total_units, amounts[i], amount, false)
+            mul_div(env, total_units, amounts[i], amount, false)
         };
         if units <= 0 {
-            panic_with_error!(&env, Error::AmountTooSmall);
+            panic_with_error!(env, Error::AmountTooSmall);
         }
-        let mut rec = read_bin(&env, side, bin).unwrap_or_else(|| new_bin(&env, &cfg, bin));
+        let mut rec = read_bin(env, side, bin).unwrap_or_else(|| new_bin(env, cfg, bin));
         if rec.total_shares > 0 && rec.inventory == 0 {
             // fully filled generation being reused: seal its accumulators
             write_sealed(
-                &env,
+                env,
                 side,
                 bin,
                 rec.gen,
@@ -950,13 +956,13 @@ fn deposit_directional(
         } else {
             match rec.inventory.checked_mul(DILUTION_LIMIT) {
                 Some(v) if v >= rec.total_shares => {}
-                Some(_) => panic_with_error!(&env, Error::BinDust),
+                Some(_) => panic_with_error!(env, Error::BinDust),
                 None => {}
             }
-            mul_div(&env, units, rec.total_shares, rec.inventory, false)
+            mul_div(env, units, rec.total_shares, rec.inventory, false)
         };
         if shares <= 0 {
-            panic_with_error!(&env, Error::AmountTooSmall);
+            panic_with_error!(env, Error::AmountTooSmall);
         }
         rec.inventory += units;
         rec.total_shares += shares;
@@ -968,11 +974,11 @@ fn deposit_directional(
             ckpt_p: rec.acc_p,
             ckpt_f: rec.acc_f,
         });
-        write_bin(&env, side, bin, &rec);
+        write_bin(env, side, bin, &rec);
         set.insert(bin);
         i += 1;
     }
-    write_active(&env, side, &set);
+    write_active(env, side, &set);
     entries
 }
 

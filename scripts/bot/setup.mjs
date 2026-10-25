@@ -238,7 +238,7 @@ export async function runSetup(args = {}) {
       log.info('setup', `${role}: holds ${fmt(String(haveL))} ${RC} (target ${want})`);
       continue;
     }
-    const amount = Math.min(want - haveL, Math.floor(haveU * 0.9));
+    const amount = Math.floor(Math.min(want - haveL, haveU * 0.9)); // whole units: float remainders have too many decimals for stroops
     if (amount < 1) {
       log.warn('setup', `${role}: not enough USDC (${haveU}) to mint ${RC}`);
       continue;

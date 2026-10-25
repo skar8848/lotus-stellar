@@ -65,7 +65,7 @@ pub enum Error {
     NoLiquidity = 8,
     /// amount_out < min_out
     SlippageExceeded = 9,
-    /// `Mode::TwoWay` is not implemented in this version
+    /// `Mode::TwoWay` on a pool that has a DeFindex vault
     NotImplemented = 10,
     Overflow = 11,
     /// a bin would receive less than `MIN_BIN_DEPOSIT`, or too little to mint a share
@@ -90,6 +90,9 @@ pub enum Side {
     Bid,
 }
 
+/// Directional: one-way by construction. TwoWay: the liquidity rests on both
+/// sides of its price (see `TwBin`), so the price coming back refills it;
+/// only available on pools without a vault.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {

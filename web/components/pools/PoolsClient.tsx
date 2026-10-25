@@ -9,7 +9,7 @@ import { VaultTab } from "@/components/vault/VaultTab";
 import { fromStroops } from "@/lib/amount";
 import { useConfig, useNet } from "@/lib/config-context";
 import { usePolling } from "@/lib/hooks";
-import { getPoolClient, resetMockPool } from "@/lib/pool";
+import { SUPPORTED_ABI, getPoolClient, resetMockPool } from "@/lib/pool";
 import { MAX_BIN, MIN_BIN, planPosition } from "@/lib/poolGrid";
 import { poolStatusLabel, poolYield } from "@/lib/poolUi";
 import { fmt } from "@/lib/stellar";
@@ -84,6 +84,8 @@ function PoolTab() {
 
   const cfgFn = useCallback(() => client.getConfig(), [client]);
   const cfgQ = usePolling(cfgFn, 60000, true);
+  const abiFn = useCallback(() => client.abiVersion(), [client]);
+  const abiQ = usePolling(abiFn, 300000, true);
   const tvlFn = useCallback(() => client.tvl(), [client]);
   const tvlQ = usePolling(tvlFn, 10000, true);
   const depthFn = useCallback(async () => {
@@ -194,7 +196,11 @@ function PoolTab() {
           />
           <Stat label={`${inst.base.code} in pool`} value={tvl ? fmt(fromStroops(tvl.base), 2) : "-"} sub="token balance held by the pool" />
           <Stat label="Fee tier" value={`${fmt(inst.feeBps / 100, 2)}%`} sub={`of the ${inst.quote.code} leg`} />
-          <Stat label="Bin step" value={`${fmt(inst.binStepBps / 100, 2)}%`} sub={`${inst.binStepBps} bps, bins ${MIN_BIN}..${MAX_BIN}`} />
+          <Stat
+            label="Bin step"
+            value={`${fmt(inst.binStepBps / 100, 2)}%`}
+            sub={`${inst.binStepBps} bps, bins ${MIN_BIN}..${MAX_BIN}, up to ${cfgQ.data?.maxBinsPerSwap ?? "-"} bins per swap`}
+          />
           <div className="col-span-2 min-w-0 sm:col-span-4 lg:col-span-1">
             <div className="label">Yield on {inst.quote.code} leg</div>
             <div className="mt-1 text-sm font-medium" data-testid="pool-yield">
@@ -203,6 +209,16 @@ function PoolTab() {
             <div className="mt-0.5 text-xs text-mutedfg">{yieldInfo.tone === "live" ? "vault yield accrues to positions" : "no yield is claimed"}</div>
           </div>
         </div>
+        {abiQ.data !== null && abiQ.data !== SUPPORTED_ABI ? (
+          <p className="mt-3 text-xs text-primary" data-testid="pool-abi-warning">
+            This pool reports ABI version {abiQ.data}; this app was written for version {SUPPORTED_ABI}. Some fields may not decode correctly.
+          </p>
+        ) : null}
+        {inst.supportsTwoWay && !inst.vault ? (
+          <p className="mt-3 text-xs text-mutedfg" data-testid="pool-twoway-badge">
+            Two-way LP positions are enabled on this pool.
+          </p>
+        ) : null}
         {errored ? <p className="mt-3 text-xs text-destructive">Pool read failed: {String(cfgQ.error || depthQ.error)}</p> : null}
       </Panel>
 

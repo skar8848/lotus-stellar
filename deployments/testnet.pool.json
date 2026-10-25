@@ -5,7 +5,7 @@
   "passphrase": "Test SDF Network ; September 2015",
   "abi": "docs/pool-abi.md",
   "abi_version": 1,
-  "updated_at": "2026-10-25T21:49:03Z",
+  "updated_at": "2026-10-25T22:04:54Z",
   "pools": [
     {
       "id": "lbond-usdc-idle",
@@ -70,7 +70,7 @@
           "tx": "cfa033093cefd88e260d8b01aac876a1c8820aa9b0830acb28c2f17f908a85ec"
         }
       ],
-      "notes": "Stage A+B build (directional asks and bids, QUOTE idle in the pool, no DeFindex vault). LBOND is AUTH_REQUIRED: the issuer authorised this contract with SAC set_authorized (tx pool_authorized_for_lbond); before that call the SAC rejects any transfer to it ('balance is deauthorized'). Takers and makers still need an authorized LBOND trustline. max_bins_per_swap was raised from 25 to 100 by the admin after measuring (94-bin swaps succeed on-chain).",
+      "notes": "Stage A+B build (directional asks and bids, QUOTE idle in the pool, no DeFindex vault). LBOND is AUTH_REQUIRED: the issuer authorised this contract with SAC set_authorized (tx pool_authorized_for_lbond); before that call the SAC rejects any transfer to it ('balance is deauthorized'). Takers and makers still need an authorized LBOND trustline. max_bins_per_swap was raised from 25 to 100 by the admin after measuring (94-bin swaps succeed on-chain). Runs the stage A-C build (wasm_hash above): Mode::TwoWay returns NotImplemented here; use lbond-usdc-twoway. Source note: this instance (and lbond-usdc-defindex) was deployed from an earlier build of the crate without TwoWay; its exact source is not preserved in git (the repo was first committed after deployment). Only lbond-usdc-twoway matches the committed source.",
       "measurement_txs": {
         "buy_2_bins_fee_0.0018_xlm": "39cc28f8968b520d1c33063b00168879e6a1fd8aaa40bd00ff727093997cab15",
         "buy_6_bins_fee_0.0025_xlm": "98b139d0b9518d977572cf73f57ffa7abc54f35f94e648ffdbb6e141282b82c1",
@@ -160,7 +160,7 @@
           "tx": "7a840eeaceb1e8f8367ee5073655b5d2da031462ef93c1f077b8e4bf5c994c6d"
         }
       ],
-      "notes": "Stage C build: every QUOTE-denominated balance (bid inventory, ask proceeds, fees) is held as shares of OUR DeFindex vault (Lotus USDC Blend, status live in testnet.strategies.json, entry usdc-defindex-blend; real Blend yield, about 6.9 percent APR observed) and accounted in shares, so it earns yield while it waits; a taker's swap recalls it just in time. Vault calls per swap (verified in the transaction diagnostic events): buy = 1 deposit; sell = 1 read-only get_asset_amounts_per_shares + 1 withdraw. Same LBOND authorisation as the idle pool (tx pool_authorized_for_lbond). IMPORTANT for clients: quote_swap (sell side), get_position, get_bin (Bid), depth (Bid) and tvl call DeFindex get_asset_amounts_per_shares, which updates a fee report inside the vault: always run them with simulateTransaction and never submit them as transactions (the stellar CLI auto-submits when the simulation is not read-only: pass --send=no).",
+      "notes": "Stage C build: every QUOTE-denominated balance (bid inventory, ask proceeds, fees) is held as shares of OUR DeFindex vault (Lotus USDC Blend, status live in testnet.strategies.json, entry usdc-defindex-blend; real Blend yield, about 6.9 percent APR observed) and accounted in shares, so it earns yield while it waits; a taker's swap recalls it just in time. Vault calls per swap (verified in the transaction diagnostic events): buy = 1 deposit; sell = 1 read-only get_asset_amounts_per_shares + 1 withdraw. Same LBOND authorisation as the idle pool (tx pool_authorized_for_lbond). IMPORTANT for clients: quote_swap (sell side), get_position, get_bin (Bid), depth (Bid) and tvl call DeFindex get_asset_amounts_per_shares, which updates a fee report inside the vault: always run them with simulateTransaction and never submit them as transactions (the stellar CLI auto-submits when the simulation is not read-only: pass --send=no). Runs the stage A-C build (wasm_hash above); two-way is not offered on vault-backed pools. Source note: deployed from an earlier build of the crate without TwoWay; its exact source is not preserved in git (the repo was first committed after deployment); only lbond-usdc-twoway matches the committed source. Vault withdrawals can fail with Error(Storage, ExceededLimit) when the shared vault's idle USDC changes between simulation and inclusion: re-simulate and resend.",
       "measurement_txs": {
         "buy_6_bins_fee_0.0050_xlm": "833d0ebb14b3927c67579a000cb7a577ca61c4a31c5a08ddf477557e5310e27a",
         "buy_20_bins_fee_0.0074_xlm": "de2a2db8a2fac40c9952ad03f5973ee18124e4384e15ce4ed845cf174d88b50b",
@@ -185,6 +185,78 @@
           }
         ]
       }
+    },
+    {
+      "id": "lbond-usdc-twoway",
+      "label": "LBOND / USDC (idle USDC, two-way LPs enabled)",
+      "status": "live",
+      "contract": "CC264FOWPI5R5FG4276ZIPGJ5OG5AP3IZ4RZNMC2KQNJDA7LQSFQ3SEI",
+      "base": {
+        "code": "LBOND",
+        "issuer": "GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF",
+        "sac": "CAVDLKQ2T4XBIQNY2WBUZKWQM6YDQ6NVX2N3HQ3P5Z2SBQ3VNZCBVBKE"
+      },
+      "quote": {
+        "code": "USDC",
+        "issuer": "GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56",
+        "sac": "CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU"
+      },
+      "vault": null,
+      "strategy_id": null,
+      "bin_step_bps": 10,
+      "fee_bps": 10,
+      "max_bins_per_swap": 100,
+      "supports_two_way": true,
+      "admin": "GB6ES7XBQNYO2GABLPBJYORTXPWRTKEJJCJYH6GXG7BBS5ULMKPUXH4D",
+      "wasm_hash": "e3e966ebd9931da171d51eb633a58fd44bd634b781f06ed6e895466587b7230a",
+      "deploy_txs": {
+        "pool_deploy": "5d8c7aa4d72f90aea60b45ce33d7cbfbe28b83348b4a7a254c3bb849cf37436a",
+        "pool_authorized_for_lbond": "f3d6ae544e6472bf956adda230024027151373703874c987bec3764786c6615b"
+      },
+      "smoke_test_txs": [
+        {
+          "step": "maker add_position Mode::TwoWay Ask: 100 LBOND over bins 0..4 (position 1)",
+          "tx": "aee465220a49cf8eda5efce8507b5d0717427fd630d856e1839b5e7c18b69747"
+        },
+        {
+          "step": "taker swap buy_base: 30 LBOND (20 at bin 0, 10 at bin 1); the proceeds stay in the bins as QUOTE reserves (position: 70 LBOND + 30.01 USDC held)",
+          "tx": "4c7e4c0d2789a1e446e567b30d5e3b406c37a94b209b39b99185af3f7caaf314"
+        },
+        {
+          "step": "taker swap sell: 15 LBOND back into the same bins (bin 1 then bin 0): crossback refills the BASE side (position: 85 LBOND + 15 USDC held, fees 0.04502)",
+          "tx": "651fbbac6f3c35b36a5e11ab506c76e4759612c3ceb78eb55119e39594de7d90"
+        },
+        {
+          "step": "maker claim: fees only (0.04502 USDC); holdings stay in the bins",
+          "tx": "23e6313af330bebf0f30f920b2e756f989910ed23bbc8d424a3c7d38fb36a680"
+        },
+        {
+          "step": "maker remove_position: 85 LBOND + 15 USDC returned",
+          "tx": "cfe21f99cc15266f609476a4e5f3aa09d18c7372ca1a99e0ba8b3333ff2dec83"
+        }
+      ],
+      "demo_book": {
+        "owner": "GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV (maker)",
+        "positions": [
+          {
+            "id": 2,
+            "mode": "TwoWay",
+            "side": "Ask",
+            "bins": "0..19",
+            "amount": "400 LBOND",
+            "tx": "b9af2f87615820055aa1410fc5ca7182c8aa0a54a78b71aaa1622db1242a237d"
+          },
+          {
+            "id": 3,
+            "mode": "TwoWay",
+            "side": "Bid",
+            "bins": "-20..-1",
+            "amount": "200 USDC",
+            "tx": "08ebe1408c89e89e576f72558d9dd87a1a93c36c569953f6fe5c6a588070d94e"
+          }
+        ]
+      },
+      "notes": "Final build of the crate (stages A to D). Same as lbond-usdc-idle plus Mode::TwoWay: a two-way position rests on both sides of each bin's price, so a buyer's USDC lands in the bin's USDC reserve which then bids at the same price, and the price coming back through the bin refills its LBOND (classic LP behaviour, DLMM style). Directional and two-way liquidity share the book (at every price a swap takes the directional bin first). Two-way positions: Position.inventory = LBOND held now, pending_proceeds = USDC held now (both only withdrawable with remove_position), pending_fees = claimable fees, claim pays fees only. Two-way is only available on pools without a vault. LBOND authorisation as for the other instances (tx pool_authorized_for_lbond)."
     }
   ]
 }

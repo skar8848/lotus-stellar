@@ -29,10 +29,10 @@ npm run bot -- --duration 600    # ... for 10 minutes
 npm run bot -- --dry-run         # decide and log, send nothing
 npm run bot -- --cleanup         # on stop (Ctrl+C), cancel the bot's OWN open offers and close its pool positions
 npm run bot:depeg                # stress test: push the receipt under par, watch the arb restore it
-npm run bot -- --scenario premium      # mirror image: receipt bid above par
+npm run bot -- --scenario premium      # mirror image: receipt bid above par (arb mints and sells)
 npm run bot:demo                 # ~3 minute scripted run for the video, ends with the keeper step
-npm run bot -- --scenario cross-venue  # dislocate the pool price, watch the arb close it against the SDEX
-npm run bot -- --scenario keeper       # let mm_a's offers rest (180 s), then distribute the vault interest
+npm run bot:cross                # = --scenario cross-venue: dislocate the pool price, watch the arb close it against the SDEX
+npm run bot:keeper               # = --scenario keeper: let mm_a's offers rest (180 s), then distribute the vault interest
 npm run bot -- --help            # every option with its default
 ```
 
@@ -97,8 +97,8 @@ modifies an offer it does not own.
 **`--ladder leave` (default).** The demo ladder (`maker`'s asks at 0.98 / 0.99 / 1.00 / 1.01 / 1.02) is left alone: mm_a's
 bond bids are clamped just under the cheapest ask in the book (0.9799 while the 0.98 level exists, 0.9899 once it is
 consumed) and mm_b only sells LBOND on the bond book. `--ladder take` quotes a normal +/- 5 bps book and lets the bot
-trade against the stale demo asks like any participant: it consumes the 0.98 to 1.00 levels (about 250 LBOND);
-`node scripts/04-seed-book.mjs --reset` re-posts them.
+trade against the stale demo asks like any participant: its first bids take the 0.98 and 0.99 levels (200 LBOND) and its
+flow buys then eat the 1.00 level; `node scripts/04-seed-book.mjs --reset` re-posts them.
 
 ### Flow generator (`mm.mjs`, `Flow`)
 
@@ -191,16 +191,29 @@ linked in them.
 | gross profit / fees | +2.2500000 USDC / 0.00239 XLM | +2.2500000 USDC / 0.00343 XLM |
 | peg restored (best ask back above 1 - 2 bps) | T+11.2 s | T+12.0 s (standalone rerun: T+10.3 s) |
 | `redeem()` return value | exactly the amount burnt (par) in every cycle | exactly the amount burnt (par) in every cycle |
-| `bot:premium` | mint 150.4465 + sell into 1.004 bid: +0.6018 USDC, 9.4 s, 0.00227 XLM | not rerun |
+| `--scenario premium` | mint 150.4465 + sell into 1.004 bid: +0.6018 USDC, 9.4 s, 0.00227 XLM | not rerun |
 | `cross-venue` (cheap pool Ask 80 bps off) | +0.3475 and +0.1634 USDC, gap closed T+31.8 s | +0.3475 and +0.1636 USDC, gap closed T+26.1 s |
 | keeper step | n/a (no interest) | 0.0006671 lUSDCb minted to 6 holders; mm_a's 292 lUSDCb in open offers earned 0.0002123 |
+
+Normal mode, 10 minutes each (default settings, no scenario):
+
+| | v1 (`lUSDC`, SDEX only) | v2 (`lUSDCb`, SDEX + pool legs) |
+| --- | --- | --- |
+| duration / transactions | 604 s / 36 ok, 0 failed | 605 s / 40 ok, 0 failed |
+| component error rate | 0% on 211 ticks | 0% on 339 ticks |
+| flow trades / fills / volume | 28 / 28 / about 178 | 32 (13 on the pool) / 34 / about 178 |
+| Horizon requests | 438 (44 per minute) | 496 (49 per minute) |
+| Soroban RPC requests | about 0 | about 534 (pool quotes and cross-venue scans) |
+| HTTP 429 incidents | 0 | 0 |
+| XLM spent in fees | 0.00047 | 0.0202 (mostly pool swaps and position posts) |
 
 Reading: **yes, redeeming at par restores the peg**, and it takes about one polling interval plus two ledgers
 (roughly 10 s with 1.5 s polling in the scenarios; add up to the 5 s poll in normal mode). It works because the vault is
 fully backed (`vault_value >= supply` in every run), the redemption is not rate limited and costs a few thousandths of
 an XLM. Capacity is bounded by the arbitrageur's USDC (1,000), `--arb-max-notional` (250 per cycle) and the vault's
 liquidity; larger sizes than 150 were not tested. The two legs are separate transactions, so a competitor could take the
-cheap offers between detection and the buy; the buy is then a failed transaction that costs 0.00001 XLM.
+cheap offers between detection and the buy; the buy then fails, and a failed classic transaction costs 0.00001 XLM
+(observed: a failed quote update was ledgered with a 100-stroop fee).
 
 ## Known limits
 

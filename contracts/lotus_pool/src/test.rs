@@ -168,6 +168,28 @@ impl<'a> Fx<'a> {
     fn active(&self, side: Side) -> ActiveSet {
         self.env.as_contract(&self.pool, || read_active(&self.env, side))
     }
+    fn active_tw(&self, side: Side) -> ActiveSet {
+        self.env.as_contract(&self.pool, || read_active_tw(&self.env, side))
+    }
+    fn tw_rec(&self, bin: i32) -> TwBin {
+        self.env.as_contract(&self.pool, || read_tw(&self.env, bin).unwrap_or_default())
+    }
+    /// TwoWay position funded on the fly (deposit `side`: Ask = BASE, Bid = QUOTE).
+    fn two_way(&self, owner: &Address, side: Side, lo: i32, hi: i32, amount: i128) -> u64 {
+        match side {
+            Side::Ask => self.fund_base(owner, amount),
+            Side::Bid => self.fund_quote(owner, amount),
+        }
+        self.c.add_position(
+            owner,
+            &side,
+            &Mode::TwoWay,
+            &lo,
+            &hi,
+            &amount,
+            &self.no_weights(),
+        )
+    }
 }
 
 /// QUOTE price leg for `x` BASE at `price`, rounded up (what a buyer pays).
@@ -260,7 +282,7 @@ fn config_is_stored() {
     assert_eq!(cfg.bin_step_bps, 10);
     assert_eq!(cfg.fee_bps, 10);
     assert_eq!(cfg.max_bins_per_swap, DEFAULT_MAX_BINS_PER_SWAP);
-    assert!(!cfg.supports_two_way);
+    assert!(cfg.supports_two_way, "an idle pool offers two-way bins");
     assert_eq!(f.c.abi_version(), ABI_VERSION);
     let tvl = f.c.tvl();
     assert_eq!((tvl.base, tvl.quote_value, tvl.vault_shares), (0, 0, 0));
@@ -711,11 +733,6 @@ fn add_position_validates_input() {
     );
     // 64 bins is the maximum
     assert!(add(-32, 31, 64 * ONE, &w).is_ok());
-    // TwoWay is not implemented
-    assert_eq!(
-        f.c.try_add_position(&a, &Side::Ask, &Mode::TwoWay, &0, &0, &ONE, &w),
-        Err(Ok(Error::NotImplemented.into()))
-    );
     // a failed call leaves no trace
     assert_eq!(f.bal_base(&a), 1_000 * ONE - 64 * ONE);
 }
@@ -1080,15 +1097,6 @@ fn events_are_emitted() {
     let (maker, taker) = (f.user(), f.user());
     let id = f.ask(&maker, 0, 1, 20 * ONE);
     // add_position published exactly one pool event: PositionAdded
-    let expected = PositionAdded {
-        owner: maker.clone(),
-        id,
-        side: Side::Ask,
-        lo_bin: 0,
-        hi_bin: 1,
-        amount: 20 * ONE,
-    };
-    let _ = expected; // (events of the funding mint were the last call; replay below)
     f.fund_base(&maker, 20 * ONE);
     let id2 = f.c.add_position(
         &maker,
@@ -1243,6 +1251,12 @@ fn liabilities(f: &Fx, ids: &StdVec<u64>) -> (i128, i128) {
     let (mut base, mut quote) = (0i128, 0i128);
     for id in ids {
         let p = f.c.get_position(id);
+        if p.mode == Mode::TwoWay {
+            // BASE held in `inventory`, QUOTE held in `pending_proceeds`
+            base += p.inventory;
+            quote += p.pending_proceeds + p.pending_fees;
+            continue;
+        }
         match p.side {
             Side::Ask => {
                 base += p.inventory;
@@ -1281,6 +1295,10 @@ fn assert_solvent(f: &Fx, ids: &StdVec<u64>, ctx: &str) {
 /// every one: solvency, monotonic accounting, and (at the end) that a full
 /// wind-down pays everybody and leaves only dust.
 fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
+    random_walk_modes(f, seed, steps, accrue, false)
+}
+
+fn random_walk_modes(f: &Fx, seed: u64, steps: usize, accrue: bool, two_way: bool) {
     let mut rng = Rng(seed);
     let makers: StdVec<Address> = (0..4).map(|_| f.user()).collect();
     let takers: StdVec<Address> = (0..3).map(|_| f.user()).collect();
@@ -1300,6 +1318,24 @@ fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
         let before = snapshot(f, -8, 8);
         let op = rng.below(100);
         let ctx = std::format!("seed {} step {} op {}", seed, step, op);
+        // vault yield and loss while positions are open (the accrue branch further down is only
+        // reached when no position is open, so it injects nothing in the interesting states)
+        if accrue && rng.below(100) < 10 {
+            if let Some(v) = &f.vault {
+                if rng.below(8) == 0 {
+                    // a small loss: the vault gives up about 0.3 percent of its underlying
+                    let bal = f.bal_quote(v);
+                    let amt = bal / (300 + rng.below(300) as i128);
+                    if amt > 0 {
+                        MockVaultClient::new(&f.env, v).slash(&amt);
+                    }
+                } else {
+                    let amt = rng.range(1, 50) as i128 * ONE / 10;
+                    f.fund_quote(&donor, amt);
+                    MockVaultClient::new(&f.env, v).accrue(&donor, &amt);
+                }
+            }
+        }
         if op < 25 && open.len() < 40 {
             // add an Ask or a Bid position
             let owner = makers[rng.below(4) as usize].clone();
@@ -1323,15 +1359,12 @@ fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
                 f.fund_quote(&owner, amount);
             }
             let side = if ask { Side::Ask } else { Side::Bid };
-            match f.c.try_add_position(
-                &owner,
-                &side,
-                &Mode::Directional,
-                &lo,
-                &hi,
-                &amount,
-                &weights,
-            ) {
+            let mode = if two_way && rng.below(2) == 0 {
+                Mode::TwoWay
+            } else {
+                Mode::Directional
+            };
+            match f.c.try_add_position(&owner, &side, &mode, &lo, &hi, &amount, &weights) {
                 Ok(Ok(id)) => {
                     open.push((id, owner));
                     if ask {
@@ -1404,14 +1437,20 @@ fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
                 "{}",
                 ctx
             );
-            match pre.side {
-                Side::Ask => {
-                    assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees + tol, "{}", ctx);
-                    assert_eq!(paid.base, 0);
-                }
-                Side::Bid => {
-                    assert!(paid.base <= pre.pending_proceeds, "{}", ctx);
-                    assert!(paid.quote <= pre.pending_fees + tol, "{}", ctx);
+            if pre.mode == Mode::TwoWay {
+                // proceeds stay in the bin reserves: a claim pays fees only
+                assert_eq!(paid.base, 0, "{}", ctx);
+                assert!(paid.quote <= pre.pending_fees, "{}", ctx);
+            } else {
+                match pre.side {
+                    Side::Ask => {
+                        assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees + tol, "{}", ctx);
+                        assert_eq!(paid.base, 0);
+                    }
+                    Side::Bid => {
+                        assert!(paid.base <= pre.pending_proceeds, "{}", ctx);
+                        assert!(paid.quote <= pre.pending_fees + tol, "{}", ctx);
+                    }
                 }
             }
             assert_eq!(f.bal_base(&owner) - b0, paid.base);
@@ -1419,9 +1458,15 @@ fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
             paid_out_base += paid.base;
             paid_out_quote += paid.quote;
             let post = f.c.get_position(&id);
-            assert_eq!(post.pending_proceeds, 0, "{}", ctx);
-            assert_eq!(post.pending_fees, 0, "{}", ctx);
-            assert_eq!(post.inventory, pre.inventory, "{}", ctx);
+            if pre.mode == Mode::TwoWay {
+                assert_eq!(post.pending_proceeds, pre.pending_proceeds, "{}", ctx);
+            } else {
+                assert_eq!(post.pending_proceeds, 0, "{}", ctx);
+            }
+            // (with a vault, the views convert shares at a floored rate that moves by a stroop
+            // when the claim withdraws shares)
+            assert!(post.pending_fees <= tol, "{}", ctx);
+            assert!((post.inventory - pre.inventory).abs() <= tol, "{}", ctx);
             assert_eq!(post.filled, pre.filled, "{}", ctx);
         } else if !open.is_empty() {
             // remove
@@ -1429,15 +1474,13 @@ fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
             let (id, owner) = open.remove(k);
             let pre = f.c.get_position(&id);
             let paid = f.c.remove_position(&owner, &id);
-            match pre.side {
-                Side::Ask => {
-                    assert!(paid.base <= pre.inventory, "{}", ctx);
-                    assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees + tol, "{}", ctx);
-                }
-                Side::Bid => {
-                    assert!(paid.base <= pre.pending_proceeds, "{}", ctx);
-                    assert!(paid.quote <= pre.inventory + pre.pending_fees + tol, "{}", ctx);
-                }
+            if pre.mode == Mode::TwoWay || pre.side == Side::Ask {
+                // (a two-way position holds BASE in `inventory` and QUOTE in `pending_proceeds`)
+                assert!(paid.base <= pre.inventory, "{}", ctx);
+                assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees + tol, "{}", ctx);
+            } else {
+                assert!(paid.base <= pre.pending_proceeds, "{}", ctx);
+                assert!(paid.quote <= pre.inventory + pre.pending_fees + tol, "{}", ctx);
             }
             paid_out_base += paid.base;
             paid_out_quote += paid.quote;
@@ -1469,6 +1512,15 @@ fn random_walk(f: &Fx, seed: u64, steps: usize, accrue: bool) {
         }
         let ids: StdVec<u64> = open.iter().map(|(id, _)| *id).collect();
         assert_solvent(f, &ids, &ctx);
+        // the two-way index matches the two-way reserves
+        {
+            let (tw_ask, tw_bid) = (f.active_tw(Side::Ask), f.active_tw(Side::Bid));
+            for bin in -8..=8 {
+                let t = f.tw_rec(bin);
+                assert_eq!(tw_ask.contains(bin), t.x > 0, "{}: two-way ask index {}", ctx, bin);
+                assert_eq!(tw_bid.contains(bin), t.y > 0, "{}: two-way bid index {}", ctx, bin);
+            }
+        }
         // the active index matches the bins
         for side in [Side::Ask, Side::Bid] {
             let set = f.active(side);
@@ -1551,6 +1603,76 @@ fn inventory_never_rises_and_filled_never_falls_across_a_ladder() {
             assert!(a.acc_p >= b.acc_p && a.acc_f >= b.acc_f && a.acc_x >= b.acc_x);
         }
         last = now;
+    }
+}
+
+#[test]
+fn bid_multiple_positions_share_a_bin_pro_rata() {
+    let f = setup();
+    let (a, b, taker) = (f.user(), f.user(), f.user());
+    let ida = f.bid(&a, 0, 0, 100 * ONE);
+    let idb = f.bid(&b, 0, 0, 300 * ONE);
+    assert_eq!(f.c.get_bin(&Side::Bid, &0).total_shares, 400 * ONE);
+    f.fund_base(&taker, 1_000 * ONE);
+    // sell 100 BASE at price 1.0: A's bid takes a quarter, B's three quarters
+    f.c.swap(&taker, &false, &(100 * ONE), &0);
+    let (pa, pb) = (f.c.get_position(&ida), f.c.get_position(&idb));
+    assert_eq!((pa.filled, pa.inventory), (25 * ONE, 75 * ONE));
+    assert_eq!((pb.filled, pb.inventory), (75 * ONE, 225 * ONE));
+    assert_eq!((pa.pending_proceeds, pb.pending_proceeds), (25 * ONE, 75 * ONE));
+    assert_eq!(pa.pending_fees, fee_up(100 * ONE, 10) / 4);
+    assert_eq!(pb.pending_fees, fee_up(100 * ONE, 10) * 3 / 4);
+    // each leaves with exactly its part
+    let ra = f.c.remove_position(&a, &ida);
+    assert_eq!((ra.base, ra.quote), (25 * ONE, 75 * ONE + pa.pending_fees));
+    let rb = f.c.remove_position(&b, &idb);
+    assert_eq!((rb.base, rb.quote), (75 * ONE, 225 * ONE + pb.pending_fees));
+    assert_eq!(f.bal_base(&f.pool), 0);
+    assert_eq!(f.bal_quote(&f.pool), 0);
+}
+
+#[test]
+fn bid_min_out_bin_cap_and_rounding() {
+    let f = setup();
+    let (maker, taker) = (f.user(), f.user());
+    f.bid(&maker, -9, 0, 100 * ONE); // 10 USDC per bin
+    f.fund_base(&taker, 1_000 * ONE);
+    // min_out
+    let q = f.c.quote_swap(&false, &(5 * ONE));
+    assert_eq!(
+        f.c.try_swap(&taker, &false, &(5 * ONE), &(q.amount_out + 1)),
+        Err(Ok(Error::SlippageExceeded.into()))
+    );
+    assert_eq!(f.bal_base(&taker), 1_000 * ONE, "a reverted sell pulls nothing");
+    // max_bins_per_swap: 3 bins of ~10 USDC
+    f.c.set_max_bins_per_swap(&3);
+    let q = f.c.quote_swap(&false, &(500 * ONE));
+    assert_eq!((q.bins_crossed, q.partial), (3, true));
+    let out = f.c.swap(&taker, &false, &(500 * ONE), &0);
+    assert_eq!(out, q.amount_out);
+    assert!(out < 30 * ONE && out > 29 * ONE, "{}", out);
+    assert_eq!(f.c.depth(&Side::Bid, &-9, &0).len(), 7);
+    // a small order fits in the cap and is not partial
+    assert!(!f.c.quote_swap(&false, &(5 * ONE)).partial);
+
+    // rounding at price 0.999 (bin -1): the seller never gets more than q - fee, tiny sales pay nothing
+    let f = setup();
+    let (maker, taker) = (f.user(), f.user());
+    f.bid(&maker, -1, -1, 10 * ONE);
+    f.fund_base(&taker, 100);
+    assert_eq!(f.c.quote_swap(&false, &1).amount_out, 0);
+    assert_eq!(f.c.quote_swap(&false, &2).amount_out, 0, "price leg 1, fee 1, nothing left");
+    assert_eq!(f.c.quote_swap(&false, &3).amount_out, 1, "price leg 2, fee 1");
+    assert_eq!(
+        f.c.try_swap(&taker, &false, &1, &0),
+        Err(Ok(Error::NoLiquidity.into()))
+    );
+    let p = f.price(-1);
+    for x in [3i128, 10, 37, 99] {
+        let out = f.c.quote_swap(&false, &x).amount_out;
+        let q = q_down(x, p);
+        assert_eq!(out, q - fee_up(q, 10), "x = {}", x);
+        assert!(out * ONE <= x * p, "the seller never receives more than the exact price leg");
     }
 }
 
@@ -1859,4 +1981,571 @@ fn vault_random_operations_with_a_dumb_vault() {
     let f = setup_test_vault();
     seed_vault(&f, 10_000 * ONE);
     random_walk(&f, 77, 160, true);
+}
+
+// ---------------------------------------------------------------------------
+// stage D: Mode::TwoWay (two-sided bins with crossback)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_way_crossback_round_trip() {
+    let f = setup();
+    let (lp, buyer, seller) = (f.user(), f.user(), f.user());
+    // 100 BASE over bins 0..4, 20 per bin, as a two-way position
+    let id = f.two_way(&lp, Side::Ask, 0, 4, 100 * ONE);
+    let p = f.c.get_position(&id);
+    assert_eq!(p.mode, Mode::TwoWay);
+    assert_eq!((p.inventory, p.pending_proceeds, p.pending_fees), (100 * ONE, 0, 0));
+    assert_eq!(f.c.depth(&Side::Ask, &0, &4).len(), 5);
+    assert_eq!(f.c.depth(&Side::Bid, &0, &4).len(), 0, "nothing to sell into yet");
+    assert!(f.active_tw(Side::Ask).contains(0) && !f.active_tw(Side::Bid).contains(0));
+
+    // buy 20 BASE at bin 0 and 10 BASE at bin 1
+    let (p0, p1) = (f.price(0), f.price(1));
+    let (q0, q1) = (q_up(20 * ONE, p0), q_up(10 * ONE, p1));
+    let budget = q0 + fee_up(q0, 10) + q1 + fee_up(q1, 10);
+    f.fund_quote(&buyer, budget);
+    let out = f.c.swap(&buyer, &true, &budget, &(30 * ONE));
+    assert_eq!(out, 30 * ONE);
+    assert_eq!(f.bal_quote(&buyer), 0);
+
+    // the proceeds stayed in the bins as QUOTE reserves: bins 0 and 1 now bid
+    let p = f.c.get_position(&id);
+    assert_eq!(p.inventory, 70 * ONE, "BASE still held");
+    assert_eq!(p.pending_proceeds, q0 + q1, "QUOTE now held (not claimable, it is a reserve)");
+    assert_eq!(p.pending_fees, fee_up(q0, 10) + fee_up(q1, 10));
+    assert_eq!(p.filled, 30 * ONE);
+    assert!(!f.active_tw(Side::Ask).contains(0), "bin 0 sold out");
+    assert!(f.active_tw(Side::Ask).contains(1) && f.active_tw(Side::Bid).contains(0));
+    assert!(f.active_tw(Side::Bid).contains(1));
+    let asks = f.c.depth(&Side::Ask, &0, &4);
+    assert_eq!(asks.len(), 4);
+    assert_eq!((asks.get(0).unwrap().bin, asks.get(0).unwrap().inventory), (1, 10 * ONE));
+    let bids = f.c.depth(&Side::Bid, &0, &4);
+    assert_eq!(bids.len(), 2);
+    assert_eq!((bids.get(0).unwrap().bin, bids.get(0).unwrap().inventory), (0, q0));
+    assert_eq!((bids.get(1).unwrap().bin, bids.get(1).unwrap().inventory), (1, q1));
+
+    // the price comes back: a seller sells 15 BASE, highest bid first (bin 1 then bin 0)
+    f.fund_base(&seller, 15 * ONE);
+    let quote = f.c.quote_swap(&false, &(15 * ONE));
+    assert_eq!(quote.bins_crossed, 2);
+    assert!(!quote.partial);
+    let back = f.c.swap(&seller, &false, &(15 * ONE), &0);
+    assert_eq!(back, quote.amount_out);
+    let (qa, qb) = (q_down(10 * ONE, p1), q_down(5 * ONE, p0));
+    let payout = (qa - fee_up(qa, 10)) + (qb - fee_up(qb, 10));
+    assert_eq!(back, payout);
+    assert_eq!(f.bal_quote(&seller), payout);
+
+    // crossback happened: bin 1 holds BASE again (20), bin 0 holds 5 BASE and 15 QUOTE
+    let (t0, t1) = (f.tw_rec(0), f.tw_rec(1));
+    assert_eq!((t1.x, t1.y), (20 * ONE, 0));
+    assert_eq!((t0.x, t0.y), (5 * ONE, q0 - qb));
+    assert!(!f.active_tw(Side::Bid).contains(1) && f.active_tw(Side::Bid).contains(0));
+    let p = f.c.get_position(&id);
+    assert_eq!(p.inventory, 5 * ONE + 20 * ONE + 60 * ONE);
+    assert_eq!(p.pending_proceeds, q0 - qb);
+    let fees = fee_up(q0, 10) + fee_up(q1, 10) + fee_up(qa, 10) + fee_up(qb, 10);
+    assert_eq!(p.pending_fees, fees);
+    assert_eq!(p.filled, 30 * ONE + 15 * ONE, "volume in both directions");
+
+    // claim pays the fees only; the holdings stay
+    let c = f.c.claim(&lp, &id);
+    assert_eq!((c.base, c.quote), (0, fees));
+    let p = f.c.get_position(&id);
+    assert_eq!((p.inventory, p.pending_proceeds, p.pending_fees), (85 * ONE, q0 - qb, 0));
+    let again = f.c.claim(&lp, &id);
+    assert_eq!((again.base, again.quote), (0, 0));
+
+    // removal pays both reserves, once
+    let r = f.c.remove_position(&lp, &id);
+    assert_eq!((r.base, r.quote), (85 * ONE, q0 - qb));
+    assert_eq!(f.bal_base(&lp), 85 * ONE);
+    assert_eq!(f.bal_quote(&lp), fees + q0 - qb);
+    assert!(f.c.try_remove_position(&lp, &id).is_err());
+    // the LP took everything the pool held: 100 - 30 sold + 15 bought back = 85 BASE
+    assert_eq!(f.bal_base(&f.pool), 0);
+    assert_eq!(f.bal_quote(&f.pool), 0);
+    assert!(f.active_tw(Side::Ask).is_empty() && f.active_tw(Side::Bid).is_empty());
+    // flat round trip: the LP holds 85 BASE + 15 QUOTE (= 100 of value at price ~1.0) plus the fees
+    assert_eq!(f.bal_quote(&lp), fees + (q0 - qb));
+    assert!(f.bal_quote(&lp) > fees + 14 * ONE && f.bal_quote(&lp) < fees + 16 * ONE);
+}
+
+#[test]
+fn two_way_and_directional_liquidity_share_a_price() {
+    let f = setup();
+    let (a, b, taker) = (f.user(), f.user(), f.user());
+    let ida = f.ask(&a, 0, 0, 10 * ONE);
+    let idb = f.two_way(&b, Side::Ask, 0, 0, 10 * ONE);
+    assert_eq!(f.c.get_bin(&Side::Ask, &0).inventory, 20 * ONE, "both are offered at bin 0");
+    let d = f.c.depth(&Side::Ask, &0, &0);
+    assert_eq!((d.len(), d.get(0).unwrap().inventory), (1, 20 * ONE));
+    // a bin that only holds two-way liquidity is in the depth too
+    f.two_way(&b, Side::Ask, 3, 3, 5 * ONE);
+    assert_eq!(f.c.depth(&Side::Ask, &0, &5).len(), 2);
+
+    // buy 15 BASE: the directional bin goes first, then the two-way bin
+    f.fund_quote(&taker, 100 * ONE);
+    let budget = 15 * ONE + fee_up(15 * ONE, 10);
+    let quote = f.c.quote_swap(&true, &budget);
+    assert_eq!((quote.amount_out, quote.bins_crossed), (15 * ONE, 2));
+    assert_eq!(f.c.swap(&taker, &true, &budget, &0), 15 * ONE);
+    assert_eq!(f.c.get_position(&ida).pending_proceeds, 10 * ONE);
+    assert_eq!(f.c.get_position(&ida).inventory, 0);
+    let pb = f.c.get_position(&idb);
+    assert_eq!((pb.inventory, pb.pending_proceeds), (5 * ONE, 5 * ONE));
+    assert_eq!(f.c.get_bin(&Side::Ask, &0).inventory, 5 * ONE);
+    assert_eq!(f.c.get_bin(&Side::Bid, &0).inventory, 5 * ONE, "the two-way QUOTE now bids at the same price");
+
+    // the directional ask LP can leave with its proceeds; the two-way LP is unaffected
+    let ra = f.c.remove_position(&a, &ida);
+    assert_eq!((ra.base, ra.quote), (0, 10 * ONE + fee_up(10 * ONE, 10)));
+    let pb2 = f.c.get_position(&idb);
+    assert_eq!((pb2.inventory, pb2.pending_proceeds), (5 * ONE, 5 * ONE));
+}
+
+#[test]
+fn two_way_late_depositor_gets_a_value_share_and_no_old_fees() {
+    let f = setup();
+    let (a, b, taker) = (f.user(), f.user(), f.user());
+    let ida = f.two_way(&a, Side::Ask, 0, 0, 100 * ONE);
+    f.fund_quote(&taker, 100 * ONE);
+    f.c.swap(&taker, &true, &(50 * ONE + fee_up(50 * ONE, 10)), &0);
+    let t = f.tw_rec(0);
+    assert_eq!((t.x, t.y), (50 * ONE, 50 * ONE));
+    let fee_before = f.c.get_position(&ida).pending_fees;
+    assert_eq!(fee_before, fee_up(50 * ONE, 10));
+
+    // B adds 50 BASE: the bin is worth 100 BASE at price 1.0, B brings 50, so B owns a third
+    let idb = f.two_way(&b, Side::Ask, 0, 0, 50 * ONE);
+    let (pa, pb) = (f.c.get_position(&ida), f.c.get_position(&idb));
+    assert_eq!(pb.pending_fees, 0, "B does not get A's fees");
+    assert_eq!(pa.pending_fees, fee_before);
+    assert!((pb.inventory - 100 * ONE / 3).abs() <= 1, "{}", pb.inventory);
+    assert!((pb.pending_proceeds - 50 * ONE / 3).abs() <= 1, "{}", pb.pending_proceeds);
+    assert!((pa.inventory - 200 * ONE / 3).abs() <= 1, "{}", pa.inventory);
+    assert!((pa.pending_proceeds - 100 * ONE / 3).abs() <= 1, "{}", pa.pending_proceeds);
+    // the sum of the slices never exceeds the reserves
+    let t = f.tw_rec(0);
+    assert!(pa.inventory + pb.inventory <= t.x && pa.pending_proceeds + pb.pending_proceeds <= t.y);
+
+    // new fees are shared 2:1
+    let seller = f.user();
+    f.fund_base(&seller, 30 * ONE);
+    f.c.swap(&seller, &false, &(30 * ONE), &0);
+    let (pa2, pb2) = (f.c.get_position(&ida), f.c.get_position(&idb));
+    let new_fee_a = pa2.pending_fees - fee_before;
+    assert!((new_fee_a - 2 * pb2.pending_fees).abs() <= 2, "{} vs {}", new_fee_a, pb2.pending_fees);
+    // both can leave and the pool keeps only dust
+    f.c.remove_position(&a, &ida);
+    f.c.remove_position(&b, &idb);
+    assert!(f.bal_base(&f.pool) <= 3 && f.bal_quote(&f.pool) <= 3);
+}
+
+#[test]
+fn two_way_quote_deposit_into_a_mixed_bin() {
+    // a QUOTE deposit is valued in BASE at the bin price
+    let f = setup();
+    let (a, b, taker) = (f.user(), f.user(), f.user());
+    f.two_way(&a, Side::Ask, 0, 0, 100 * ONE);
+    f.fund_quote(&taker, 100 * ONE);
+    f.c.swap(&taker, &true, &(40 * ONE + fee_up(40 * ONE, 10)), &0);
+    // bin 0: 60 BASE + 40 QUOTE = 100 BASE of value; B brings 50 QUOTE = 50 BASE of value
+    let idb = f.two_way(&b, Side::Bid, 0, 0, 50 * ONE);
+    let pb = f.c.get_position(&idb);
+    let value_b = pb.inventory + pb.pending_proceeds; // price 1.0
+    assert!((value_b - 50 * ONE).abs() <= 2, "{}", value_b);
+    assert_eq!(f.tw_rec(0).y, 90 * ONE);
+    // a QUOTE-only deposit into a fresh bin below: a resting bid that flips into an ask when hit
+    let idc = f.two_way(&b, Side::Bid, -3, -1, 30 * ONE);
+    let pc = f.c.get_position(&idc);
+    assert_eq!((pc.inventory, pc.pending_proceeds), (0, 30 * ONE));
+    let seller = f.user();
+    f.fund_base(&seller, 5 * ONE);
+    // the highest bid is bin 0 (90 QUOTE reserve): the sale goes there, not to bins -1..-3
+    f.c.swap(&seller, &false, &(5 * ONE), &0);
+    assert_eq!(f.tw_rec(-1).y, 10 * ONE);
+    assert!(f.tw_rec(0).x > 60 * ONE);
+}
+
+#[test]
+fn two_way_is_not_available_with_a_vault() {
+    let f = setup_with(10, 10, true);
+    assert!(!f.c.get_config().supports_two_way);
+    let a = f.user();
+    f.fund_base(&a, 10 * ONE);
+    assert_eq!(
+        f.c.try_add_position(&a, &Side::Ask, &Mode::TwoWay, &0, &0, &(10 * ONE), &f.no_weights()),
+        Err(Ok(Error::NotImplemented.into()))
+    );
+    assert_eq!(f.bal_base(&a), 10 * ONE);
+}
+
+#[test]
+fn two_way_swap_respects_the_bin_cap_and_slippage() {
+    let f = setup();
+    let (lp, taker) = (f.user(), f.user());
+    f.two_way(&lp, Side::Ask, 0, 9, 100 * ONE);
+    f.fund_quote(&taker, 1_000 * ONE);
+    f.c.set_max_bins_per_swap(&4);
+    let q = f.c.quote_swap(&true, &(500 * ONE));
+    assert_eq!((q.bins_crossed, q.amount_out, q.partial), (4, 40 * ONE, true));
+    assert_eq!(
+        f.c.try_swap(&taker, &true, &(500 * ONE), &(41 * ONE)),
+        Err(Ok(Error::SlippageExceeded.into()))
+    );
+    assert_eq!(f.c.swap(&taker, &true, &(500 * ONE), &(40 * ONE)), 40 * ONE);
+    // the sold-out bins are now bids, the rest still asks
+    assert_eq!(f.c.depth(&Side::Bid, &0, &9).len(), 4);
+    assert_eq!(f.c.depth(&Side::Ask, &0, &9).len(), 6);
+}
+
+#[test]
+fn two_way_random_operations_stay_solvent() {
+    for seed in [8u64, 21, 555, 9001, 123456] {
+        let f = setup();
+        random_walk_modes(&f, seed, 220, false, true);
+    }
+}
+
+#[test]
+fn two_way_random_operations_with_other_fees_and_grids() {
+    for (seed, step, fee) in [(31u64, 100u32, 0u32), (32, 1, 1000), (33, 50, 37), (34, 10, 10)] {
+        let f = setup_with(step, fee, false);
+        random_walk_modes(&f, seed, 180, false, true);
+    }
+}
+
+/// Deeper fuzzing, off by default: `cargo test -p lotus_pool deep_random_walks -- --ignored`
+/// (a few minutes). Directional + two-way on an idle pool, and directional on a vault pool
+/// with yield.
+#[test]
+#[ignore = "slow: run explicitly with -- --ignored"]
+fn deep_random_walks() {
+    for seed in 1000..1014u64 {
+        let f = setup();
+        random_walk_modes(&f, seed, 300, false, true);
+        let f = setup_with(10, 10, true);
+        seed_vault(&f, 10_000 * ONE);
+        random_walk_modes(&f, seed + 500, 250, true, false);
+        let f = setup_with(25, 7, false);
+        random_walk_modes(&f, seed + 900, 250, false, true);
+    }
+}
+
+// ===========================================================================
+// Extreme fuzz (from the independent review) (full grid, huge fee, overlapping LPs, tiny/huge amounts,
+// vault yield AND loss while positions are open)
+// ===========================================================================
+
+fn log_uniform(rng: &mut Rng, lo: i128, hi: i128) -> i128 {
+    // log-uniform integer in [lo, hi]
+    let (l, h) = ((lo as f64).ln(), (hi as f64).ln());
+    let u = (rng.below(1_000_000) as f64) / 1_000_000.0;
+    let v = (l + (h - l) * u).exp() as i128;
+    v.clamp(lo, hi)
+}
+
+fn extreme_walk(f: &Fx, seed: u64, steps: usize, vault_moves: bool) {
+    extreme_walk_tw(f, seed, steps, vault_moves, false)
+}
+
+fn extreme_walk_tw(f: &Fx, seed: u64, steps: usize, vault_moves: bool, tw: bool) {
+    let mut rng = Rng(seed);
+    let makers: StdVec<Address> = (0..6).map(|_| f.user()).collect();
+    let takers: StdVec<Address> = (0..3).map(|_| f.user()).collect();
+    let donor = f.user();
+    let mut open: StdVec<(u64, Address)> = StdVec::new();
+    let hot: [i32; 3] = [-3, 0, 5]; // few hot bins so that many LPs overlap
+    let tol: i128 = if f.vault.is_some() { 4 } else { 0 };
+    let (mut pin_b, mut pout_b, mut pin_q, mut pout_q) = (0i128, 0i128, 0i128, 0i128);
+    let mut slashed = 0i128;
+    let mut accrued_total = 0i128;
+    for step in 0..steps {
+        f.env.cost_estimate().budget().reset_unlimited();
+        let op = rng.below(100);
+        let ctx = std::format!("seed {} step {} op {}", seed, step, op);
+        if vault_moves && rng.below(100) < 8 {
+            if let Some(v) = &f.vault {
+                if rng.below(3) == 0 {
+                    // loss (only the mock-ish vault: take a bit of the underlying)
+                    let bal = f.bal_quote(v);
+                    let amt = bal / (200 + rng.below(800) as i128);
+                    if amt > 0 {
+                        test_vault(f).slash(&amt);
+                        slashed += amt;
+                    }
+                } else {
+                    let amt = log_uniform(&mut rng, 1, 5 * ONE);
+                    f.fund_quote(&donor, amt);
+                    test_vault(f).accrue(&donor, &amt);
+                    accrued_total += amt;
+                }
+            }
+        }
+        if op < 30 && open.len() < 60 {
+            let owner = makers[rng.below(6) as usize].clone();
+            let (lo, hi) = if rng.below(2) == 0 {
+                let c = hot[rng.below(3) as usize];
+                (c - rng.range(0, 2) as i32, c + rng.range(0, 2) as i32)
+            } else {
+                let lo = rng.range(-200, 200) as i32;
+                let w = rng.range(0, 63) as i32;
+                (lo, (lo + w).min(200))
+            };
+            let n = (hi - lo + 1) as u32;
+            let amount = log_uniform(&mut rng, 10_000, 100_000 * ONE);
+            let ask = rng.below(2) == 0;
+            let weights = if rng.below(3) == 0 {
+                let mut w = Vec::new(&f.env);
+                for _ in 0..n {
+                    w.push_back(if rng.below(4) == 0 { 0 } else { rng.range(1, 1000) as u32 });
+                }
+                w
+            } else {
+                f.no_weights()
+            };
+            if ask { f.fund_base(&owner, amount) } else { f.fund_quote(&owner, amount) }
+            let side = if ask { Side::Ask } else { Side::Bid };
+            let mode = if tw && rng.below(2) == 0 { Mode::TwoWay } else { Mode::Directional };
+            match f.c.try_add_position(&owner, &side, &mode, &lo, &hi, &amount, &weights) {
+                Ok(Ok(id)) => {
+                    open.push((id, owner));
+                    if ask { pin_b += amount } else { pin_q += amount }
+                }
+                _ => {
+                    if ask {
+                        TokenClient::new(&f.env, &f.base).transfer(&owner, &donor, &amount);
+                    } else {
+                        TokenClient::new(&f.env, &f.quote).transfer(&owner, &donor, &amount);
+                    }
+                }
+            }
+        } else if op < 70 {
+            let taker = takers[rng.below(3) as usize].clone();
+            let buy = rng.below(2) == 0;
+            let amount = log_uniform(&mut rng, 1, 50_000 * ONE);
+            if buy { f.fund_quote(&taker, amount) } else { f.fund_base(&taker, amount) }
+            let (qb, qq) = (f.bal_base(&taker), f.bal_quote(&taker));
+            let quote = f.c.quote_swap(&buy, &amount);
+            match f.c.try_swap(&taker, &buy, &amount, &0) {
+                Ok(Ok(out)) => {
+                    assert_eq!(out, quote.amount_out, "{}: quote==swap", ctx);
+                    let (db, dq) = (f.bal_base(&taker) - qb, f.bal_quote(&taker) - qq);
+                    if buy {
+                        assert_eq!(db, out, "{}", ctx);
+                        pin_q += -dq; pout_b += db;
+                    } else {
+                        assert_eq!(dq, out, "{}", ctx);
+                        pin_b += -db; pout_q += dq;
+                    }
+                }
+                other => {
+                    assert_eq!(quote.amount_out, 0, "{}: reverted but quotable {:?}", ctx, other);
+                }
+            }
+            let (lb, lq) = (f.bal_base(&taker), f.bal_quote(&taker));
+            if lb > 0 { TokenClient::new(&f.env, &f.base).transfer(&taker, &donor, &lb); }
+            if lq > 0 { TokenClient::new(&f.env, &f.quote).transfer(&taker, &donor, &lq); }
+        } else if op < 85 && !open.is_empty() {
+            let k = rng.below(open.len() as u64) as usize;
+            let (id, owner) = open[k].clone();
+            let pre = f.c.get_position(&id);
+            let paid = f.c.claim(&owner, &id);
+            if pre.mode == Mode::TwoWay {
+                assert_eq!(paid.base, 0, "{}", ctx);
+                assert!(paid.quote <= pre.pending_fees, "{} tw claim {:?} {:?}", ctx, paid, pre);
+            } else { match pre.side {
+                Side::Ask => assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees + tol, "{} claim ask {:?} {:?}", ctx, paid, pre),
+                Side::Bid => {
+                    assert!(paid.base <= pre.pending_proceeds, "{}", ctx);
+                    assert!(paid.quote <= pre.pending_fees + tol, "{}", ctx);
+                }
+            } }
+            pout_b += paid.base; pout_q += paid.quote;
+        } else if !open.is_empty() {
+            let k = rng.below(open.len() as u64) as usize;
+            let (id, owner) = open.remove(k);
+            let pre = f.c.get_position(&id);
+            let paid = f.c.remove_position(&owner, &id);
+            if pre.mode == Mode::TwoWay {
+                assert!(paid.base <= pre.inventory, "{}", ctx);
+                assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees, "{} tw rm {:?} {:?}", ctx, paid, pre);
+            } else { match pre.side {
+                Side::Ask => {
+                    assert!(paid.base <= pre.inventory, "{}", ctx);
+                    assert!(paid.quote <= pre.pending_proceeds + pre.pending_fees + tol, "{} rm ask {:?} {:?}", ctx, paid, pre);
+                }
+                Side::Bid => {
+                    assert!(paid.base <= pre.pending_proceeds, "{}", ctx);
+                    assert!(paid.quote <= pre.inventory + pre.pending_fees + tol, "{} rm bid {:?} {:?}", ctx, paid, pre);
+                }
+            } }
+            pout_b += paid.base; pout_q += paid.quote;
+        }
+        let ids: StdVec<u64> = open.iter().map(|(id, _)| *id).collect();
+        assert_solvent(f, &ids, &ctx);
+        // bitmap matches live bins on the touched bins
+        for side in [Side::Ask, Side::Bid] {
+            let set = f.active(side);
+            for bin in [-200, -199, -3, 0, 5, 199, 200] {
+                let live = f.bin_rec(side, bin).inventory > 0;
+                assert_eq!(set.contains(bin), live, "{}: index {:?} {}", ctx, side, bin);
+            }
+        }
+        let (tw_ask, tw_bid) = (f.active_tw(Side::Ask), f.active_tw(Side::Bid));
+        for bin in [-200, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 200] {
+            let t = f.tw_rec(bin);
+            assert_eq!(tw_ask.contains(bin), t.x > 0, "{}: tw ask idx {}", ctx, bin);
+            assert_eq!(tw_bid.contains(bin), t.y > 0, "{}: tw bid idx {}", ctx, bin);
+        }
+    }
+    for (id, owner) in open.clone() {
+        let paid = f.c.remove_position(&owner, &id);
+        pout_b += paid.base; pout_q += paid.quote;
+    }
+    let dust_b = f.bal_base(&f.pool);
+    let dust_q = f.tvl_quote();
+    std::println!(
+        "extreme seed {}: dust base {} quote {} (in b {} q {}, out b {} q {}) slashed {} accrued {}",
+        seed, dust_b, dust_q, pin_b, pin_q, pout_b, pout_q, slashed, accrued_total
+    );
+    assert!(dust_b >= 0 && dust_q >= 0);
+    if f.vault.is_none() {
+        assert_eq!(pin_b - pout_b, dust_b);
+        assert_eq!(pin_q - pout_q, dust_q);
+    }
+}
+
+#[test]
+fn extreme_idle_walks() {
+    for (seed, step, fee) in [(1u64, 100u32, 1000u32), (2, 1, 0), (3, 10, 10), (4, 50, 333), (5, 100, 0)] {
+        let f = setup_with(step, fee, false);
+        extreme_walk(&f, seed, 400, false);
+    }
+}
+
+#[test]
+fn extreme_vault_walks_with_yield_and_loss() {
+    for seed in [11u64, 12, 13] {
+        let f = setup_test_vault();
+        seed_vault(&f, 50 * ONE); // small vault so rounding bites
+        extreme_walk(&f, seed, 300, true);
+    }
+}
+
+#[test]
+fn extreme_two_way_walks() {
+    for (seed, step, fee) in [(21u64, 100u32, 1000u32), (22, 1, 0), (23, 10, 10), (24, 50, 333)] {
+        let f = setup_with(step, fee, false);
+        extreme_walk_tw(&f, seed, 400, false, true);
+    }
+}
+
+// ===========================================================================
+// Documented limitations (from the independent review): these tests assert the
+// CURRENT behaviour so that it cannot change unnoticed; see "Known limitations
+// from review" in contracts/lotus_pool/README.md.
+// ===========================================================================
+use soroban_sdk::testutils::{IssuerFlags, StellarAssetContract as _};
+
+/// Pool whose BASE asset has AUTH_REQUIRED + REVOCABLE (like LBOND).
+fn setup_regulated<'a>() -> (Fx<'a>, soroban_sdk::testutils::StellarAssetContract) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let base_sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    base_sac.issuer().set_flag(IssuerFlags::RequiredFlag);
+    base_sac.issuer().set_flag(IssuerFlags::RevocableFlag);
+    base_sac.issuer().set_flag(IssuerFlags::ClawbackEnabledFlag);
+    let base = base_sac.address();
+    let quote = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let pool = env.register(LotusPool, (admin.clone(), base.clone(), quote.clone(), None::<Address>, 10u32, 10u32));
+    let c = LotusPoolClient::new(&env, &pool);
+    // issuer authorises the pool
+    StellarAssetClient::new(&env, &base).set_authorized(&pool, &true);
+    (Fx { env, admin, base, quote, vault: None, pool, c }, base_sac)
+}
+
+/// LIMITATION (a): a Bid LP whose LBOND leg cannot be delivered (trustline revoked, or the
+/// pool's own LBOND balance was clawed back) cannot recover its USDC either, because
+/// `remove_position` / `claim` pay BASE first and the whole call reverts.
+#[test]
+fn limitation_bid_lp_usdc_trapped_when_base_proceeds_cannot_be_delivered() {
+    let (f, _sac) = setup_regulated();
+    let (lp, taker) = (f.user(), f.user());
+    let sac = StellarAssetClient::new(&f.env, &f.base);
+    sac.set_authorized(&lp, &true);
+    sac.set_authorized(&taker, &true);
+    let id = f.bid(&lp, -5, -1, 100 * ONE);
+    f.fund_base(&taker, 10 * ONE);
+    f.c.swap(&taker, &false, &(10 * ONE), &0); // taker sells 10 LBOND into the bid: LP earns BASE
+    // issuer revokes the LP's LBOND authorization (compliance event)
+    sac.set_authorized(&lp, &false);
+    assert!(f.c.try_claim(&lp, &id).is_err(), "claim reverts");
+    let r = f.c.try_remove_position(&lp, &id);
+    assert!(r.is_err(), "remove_position reverts: ~90 USDC of inventory is stuck until re-authorised");
+    // sanity: after re-authorisation it works
+    sac.set_authorized(&lp, &true);
+    let paid = f.c.remove_position(&lp, &id);
+    assert!(paid.quote > 85 * ONE && paid.base > 9 * ONE);
+}
+
+/// LIMITATION (a): pool's LBOND balance clawed back -> every Bid LP with BASE proceeds is stuck,
+/// every Ask LP cannot remove (claim of Ask proceeds still works).
+#[test]
+fn limitation_clawback_of_pool_balance_blocks_bid_and_ask_removals() {
+    let (f, _sac) = setup_regulated();
+    let (bid_lp, ask_lp, taker) = (f.user(), f.user(), f.user());
+    let sac = StellarAssetClient::new(&f.env, &f.base);
+    for a in [&bid_lp, &ask_lp, &taker] { sac.set_authorized(a, &true); }
+    let bid = f.bid(&bid_lp, -5, -1, 100 * ONE);
+    let ask = f.ask(&ask_lp, 1, 5, 100 * ONE);
+    f.fund_base(&taker, 10 * ONE);
+    f.c.swap(&taker, &false, &(10 * ONE), &0);
+    // issuer claws back the pool's whole LBOND balance
+    let bal = f.bal_base(&f.pool);
+    sac.clawback(&f.pool, &bal);
+    assert!(f.c.try_remove_position(&bid_lp, &bid).is_err());
+    assert!(f.c.try_remove_position(&ask_lp, &ask).is_err());
+    // a claim of an Ask without proceeds is fine; bid claim reverts
+    assert!(f.c.try_claim(&bid_lp, &bid).is_err());
+}
+
+/// LIMITATION (d): 100 one-cent Bid bins above the real liquidity eat the whole bin budget.
+#[test]
+fn limitation_junk_bins_eat_the_swap_bin_budget() {
+    let f = setup_with(10, 10, false);
+    let (honest, spammer, taker) = (f.user(), f.user(), f.user());
+    f.bid(&honest, -10, -1, 1000 * ONE);
+    // attacker: 100 owners' worth of positions: 64 + 36 bins at the highest prices, 0.001 each
+    let a = f.bid(&spammer, 137, 200, 64 * 10_000);
+    let b = f.bid(&spammer, 101, 136, 36 * 10_000);
+    let _ = (a, b);
+    f.fund_base(&taker, 500 * ONE);
+    let q = f.c.quote_swap(&false, &(500 * ONE));
+    assert_eq!(q.bins_crossed, 100);
+    assert!(q.partial);
+    assert!(q.amount_out < ONE, "everything went to the junk bins");
+}
+
+/// LIMITATION (c): a TwoWay deposit into a bin that holds the other asset is a
+/// fee-free swap at the bin price, and the existing LP loses the fee it would have earned.
+#[test]
+fn limitation_two_way_deposit_withdraw_is_a_fee_free_swap() {
+    let f = setup_with(10, 10, false);
+    let (lp1, buyer, lp2) = (f.user(), f.user(), f.user());
+    let _id1 = f.two_way(&lp1, Side::Ask, 0, 0, 100 * ONE);
+    f.fund_quote(&buyer, 200 * ONE);
+    f.c.swap(&buyer, &true, &(100 * ONE), &0); // bin now holds ~99.9 USDC, ~0.1 BASE left
+    let t = f.tw_rec(0);
+    // LP2 deposits BASE and leaves straight away: a sell of ~half of it at the bin price
+    let id2 = f.two_way(&lp2, Side::Ask, 0, 0, 100 * ONE);
+    let paid = f.c.remove_position(&lp2, &id2);
+    // a taker selling the same BASE would have paid fee_bps (0.1 percent)
+    assert!(paid.quote > 49 * ONE, "lp2 sold ~50 BASE at the bin price without fee");
 }

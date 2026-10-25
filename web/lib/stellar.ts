@@ -15,6 +15,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { DECIMALS, SCALE, fromStroops, normalizeAmount, toStroops } from "./amount";
+import { VAULT_RACE_MESSAGE, classifyFailure, stringifyDeep } from "./txErrors";
 
 // ---------------------------------------------------------------------------
 // Assets
@@ -557,7 +558,7 @@ export type InvokeParams = {
   args: xdr.ScVal[];
   source: string;
   sign: Signer;
-  onStage?: (s: TxStage) => void;
+  onStage?: (s: TxStage, note?: string) => void;
 };
 
 /** True when an error means "the sequence number was already used" (another tx from the same account got in first). */
@@ -581,12 +582,31 @@ function describeSendError(sent: { status: string; errorResult?: unknown }): str
  * another tab, can consume it between our read and our submit); a hardware or extension wallet will ask to sign again.
  */
 export async function invokeContract(net: NetCfg, p: InvokeParams): Promise<{ hash: string; result: unknown }> {
-  try {
-    return await invokeOnce(net, p);
-  } catch (e) {
-    if (!isBadSeq(e)) throw e;
-    p.onStage?.("building");
-    return await invokeOnce(net, p);
+  let badSeqRetried = false;
+  let footprintRetries = 0;
+  for (;;) {
+    try {
+      // every attempt simulates again right before signing: no cached simulation is ever reused
+      return await invokeOnce(net, p);
+    } catch (e) {
+      const kind = (e as { failureKind?: string })?.failureKind ?? (isBadSeq(e) ? "bad-seq" : "other");
+      if (kind === "bad-seq" && !badSeqRetried) {
+        badSeqRetried = true;
+        p.onStage?.("building");
+        continue;
+      }
+      if (kind === "footprint") {
+        // shared-vault footprint race: re-simulate, re-sign and resend (twice), then say what happened
+        if (footprintRetries < 2) {
+          footprintRetries++;
+          await new Promise((r) => setTimeout(r, 1200 * footprintRetries));
+          p.onStage?.("building", "vault state changed, retrying");
+          continue;
+        }
+        throw new Error(VAULT_RACE_MESSAGE);
+      }
+      throw e;
+    }
   }
 }
 
@@ -640,7 +660,9 @@ async function invokeOnce(net: NetCfg, p: InvokeParams): Promise<{ hash: string;
     }
     if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
       const code = txResultCode(got.resultXdr);
-      throw new Error(code ? `failed on-chain: ${explainResultCode(code)}` : "transaction failed on-chain");
+      const detail = stringifyDeep([got.resultXdr, (got as { diagnosticEventsXdr?: unknown }).diagnosticEventsXdr]);
+      const kind = classifyFailure({ txCode: code, detail });
+      throw Object.assign(new Error(code ? `failed on-chain: ${explainResultCode(code)}` : "transaction failed on-chain"), { failureKind: kind });
     }
   }
   throw new Error(`timed out waiting for ${sent.hash}`);

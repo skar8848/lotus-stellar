@@ -8,6 +8,7 @@ import { fromStroops } from "@/lib/amount";
 import type { PoolInstance, Strategy } from "@/lib/config-types";
 import { useTx } from "@/lib/hooks";
 import type { PoolClient, PoolConfig } from "@/lib/pool";
+import type { Mode } from "@/lib/pool";
 import type { PositionPlan, Shape, Side } from "@/lib/poolGrid";
 import { poolYield } from "@/lib/poolUi";
 import { fmt } from "@/lib/stellar";
@@ -17,6 +18,7 @@ import { AssetField, Segmented, Spinner, TxStatus } from "@/components/common";
 import { TrustlineNotice, useAssetAccess } from "@/components/trade/access";
 
 export type PoolForm = {
+  mode: Mode;
   side: Side;
   start: string | null;
   end: string | null;
@@ -24,7 +26,7 @@ export type PoolForm = {
   amount: string;
 };
 
-export const initialPoolForm: PoolForm = { side: "Ask", start: null, end: null, shape: "uniform", amount: "" };
+export const initialPoolForm: PoolForm = { mode: "Directional", side: "Ask", start: null, end: null, shape: "uniform", amount: "" };
 
 const fx = (n: number) => String(Number(n.toFixed(4)));
 
@@ -77,7 +79,12 @@ export function PositionBuilder({
   const eff = poolEffective(form, refPrice);
   const sold = form.side === "Ask" ? inst.base : inst.quote;
   const soldAccess = form.side === "Ask" ? baseAccess : quoteAccess;
-  const twoWay = inst.supportsTwoWay || cfg?.supportsTwoWay === true;
+  // two-way needs supports_two_way AND no DeFindex vault (the contract answers NotImplemented otherwise)
+  const twoWayOk = (inst.supportsTwoWay || cfg?.supportsTwoWay === true) && !inst.vault;
+  const twoWayWhy = inst.vault
+    ? "Not available on vault-backed pools: with the USDC leg parked in DeFindex the contract returns NotImplemented for two-way positions."
+    : "This pool instance was deployed without two-way support (supports_two_way is false).";
+  const isTwoWay = form.mode === "TwoWay" && twoWayOk;
   const yieldInfo = poolYield(inst, strategies);
   const set = (patch: Partial<PoolForm>) => setForm({ ...form, ...patch });
   // signed percentage vs the reference price, without "+-0.0" artefacts
@@ -108,7 +115,7 @@ export function PositionBuilder({
       if (!plan.ok) throw new Error(plan.errors[0] ?? "Invalid position");
       const r = await client.addPosition(
         { source: wallet.address, sign: wallet.sign, onStage },
-        { side: form.side, mode: "Directional", loBin: plan.loBin, hiBin: plan.hiBin, amount: plan.deposit, weights: plan.weights },
+        { side: form.side, mode: isTwoWay ? "TwoWay" : "Directional", loBin: plan.loBin, hiBin: plan.hiBin, amount: plan.deposit, weights: plan.weights },
       );
       set({ amount: "" });
       acct.refresh();
@@ -116,7 +123,7 @@ export function PositionBuilder({
       return {
         hash: r.hash,
         result: r.result,
-        note: `${form.side} position, ${plan.bins.length} bins (${plan.loBin}..${plan.hiBin}), ${fmt(fromStroops(plan.deposit), 2)} ${sold.code}${r.simulated ? " (simulated locally, no transaction)" : ""}`,
+        note: `${isTwoWay ? "two-way " : ""}${form.side} position, ${plan.bins.length} bins (${plan.loBin}..${plan.hiBin}), ${fmt(fromStroops(plan.deposit), 2)} ${sold.code}${r.simulated ? " (simulated locally, no transaction)" : ""}`,
       };
     });
 
@@ -136,39 +143,59 @@ export function PositionBuilder({
         ]}
       />
       <p className="px-1 text-[11px] leading-relaxed text-mutedfg">
-        {form.side === "Ask"
-          ? `Your ${inst.base.code} is sold bin by bin as the price rises through the range. Proceeds arrive in ${inst.quote.code}.`
-          : `Your ${inst.quote.code} buys ${inst.base.code} bin by bin as the price falls through the range. Proceeds arrive in ${inst.base.code}.`}
+        {isTwoWay
+          ? form.side === "Ask"
+            ? `You deposit ${inst.base.code} into bins above the market; each bin also bids ${inst.quote.code} for ${inst.base.code} at its price once it has sold some.`
+            : `You deposit ${inst.quote.code} into bins below the market; each bin also offers ${inst.base.code} at its price once it has bought some.`
+          : form.side === "Ask"
+            ? `Your ${inst.base.code} is sold bin by bin as the price rises through the range. Proceeds arrive in ${inst.quote.code}.`
+            : `Your ${inst.quote.code} buys ${inst.base.code} bin by bin as the price falls through the range. Proceeds arrive in ${inst.base.code}.`}
       </p>
 
       {/* mode: directional (default) vs two-way LP */}
       <div className="flex items-center gap-2" data-testid="pool-mode">
-        <Segmented
-          value="Directional"
-          onChange={() => {}}
-          size="sm"
-          options={[{ value: "Directional", label: "Directional", title: "Inventory only goes down, proceeds only go up" }]}
-          className="flex-1"
-        />
+        <button
+          type="button"
+          data-testid="pool-mode-directional"
+          data-active={!isTwoWay ? "1" : "0"}
+          onClick={() => setForm({ ...form, mode: "Directional" })}
+          className={cn("flex-1 rounded-full border px-3 py-1 text-[11px] font-medium transition", !isTwoWay ? "border-transparent bg-white/10 text-foreground" : "border-border text-mutedfg hover:text-white")}
+        >
+          Directional
+        </button>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex-1" data-testid="pool-mode-twoway" data-enabled={twoWay ? "1" : "0"}>
+            <span className="flex-1" data-testid="pool-mode-twoway" data-enabled={twoWayOk ? "1" : "0"}>
               <button
                 type="button"
-                disabled={!twoWay}
-                className={cn("w-full rounded-full border border-border px-3 py-1 text-[11px] font-medium", twoWay ? "text-mutedfg hover:text-white" : "cursor-not-allowed text-mutedfg/50")}
+                data-testid="pool-mode-twoway-btn"
+                data-active={isTwoWay ? "1" : "0"}
+                disabled={!twoWayOk}
+                onClick={() => setForm({ ...form, mode: "TwoWay" })}
+                className={cn(
+                  "w-full rounded-full border px-3 py-1 text-[11px] font-medium transition",
+                  isTwoWay ? "border-transparent bg-white/10 text-foreground" : twoWayOk ? "border-border text-mutedfg hover:text-white" : "cursor-not-allowed border-border text-mutedfg/50",
+                )}
               >
                 Two-way LP
               </button>
             </span>
           </TooltipTrigger>
-          <TooltipContent side="top" className="max-w-[16rem] text-[11px] leading-relaxed">
-            {twoWay
-              ? "Crossback positions: filled inventory can trade back."
-              : "Not available on this pool: supports_two_way is false. Directional positions never trade back; two-way (crossback) positions are a stretch goal."}
+          <TooltipContent side="top" className="max-w-[17rem] text-[11px] leading-relaxed">
+            {twoWayOk ? "Classic LP with crossback: the position trades in both directions and bins refill when the price comes back." : twoWayWhy}
           </TooltipContent>
         </Tooltip>
       </div>
+      {!twoWayOk ? (
+        <p className="px-1 text-[11px] text-mutedfg" data-testid="pool-twoway-why">
+          Two-way LP is off here. {twoWayWhy}
+        </p>
+      ) : null}
+      {isTwoWay ? (
+        <p className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary" data-testid="pool-twoway-note">
+          Two-way LP: your liquidity rests on both sides of every bin. It earns fees in both directions and refills when the price comes back through a bin, but it can end up holding mostly the other asset ({inst.base.code} or {inst.quote.code}), like any classic LP position. Directional positions never flip back.
+        </p>
+      ) : null}
 
       <AssetField
         label={form.side === "Ask" ? `Sell (${inst.base.code})` : `Spend (${inst.quote.code})`}
@@ -240,14 +267,21 @@ export function PositionBuilder({
         <Row k="Bins" v={plan.ok ? `${plan.bins.length} (${plan.loBin} to ${plan.hiBin})` : "-"} testId="pool-bins" />
         <Row k="Price range" v={plan.ok && lo && hi ? `${fmt(Number(lo.price) / 1e7, 4, 4)} to ${fmt(Number(hi.price) / 1e7, 4, 4)}` : "-"} />
         <Row k="Fee tier" v={`${fmt(inst.feeBps / 100, 2)}% of the ${inst.quote.code} leg of each fill`} />
-        <Row
-          k="If fully filled you receive"
-          v={plan.ok ? `${fmt(fromStroops(plan.proceedsIfFilled), 2)} ${form.side === "Ask" ? inst.quote.code : inst.base.code} (before fees)` : "-"}
-        />
-        <Row k="Your funds" v={form.side === "Ask" ? `${inst.base.code} stays in the pool until filled` : `${inst.quote.code} stays in the pool until filled`} />
+        {isTwoWay ? (
+          <Row k="Earns" v="fees in both directions; Claim pays fees, Remove pays both reserves" />
+        ) : (
+          <Row
+            k="If fully filled you receive"
+            v={plan.ok ? `${fmt(fromStroops(plan.proceedsIfFilled), 2)} ${form.side === "Ask" ? inst.quote.code : inst.base.code} (before fees)` : "-"}
+          />
+        )}
+        <Row k="Your funds" v={form.side === "Ask" ? `${inst.base.code} stays in the pool` : `${inst.quote.code} stays in the pool`} />
       </div>
       <p className="px-1 text-[11px] leading-relaxed text-mutedfg">
-        Directional: inventory only goes down and proceeds only go up. A filled bin never flips back (unlike an AMM position). {form.side === "Bid" ? yieldInfo.detail : `Proceeds are ${inst.quote.code}: ${yieldInfo.detail}`}
+        {isTwoWay
+          ? `Two-way: fee tier ${fmt(inst.feeBps / 100, 2)}% is charged on top of the price in both directions and goes to the LPs of the bin. `
+          : "Directional: inventory only goes down and proceeds only go up. A filled bin never flips back (unlike an AMM position). "}
+        {form.side === "Bid" || isTwoWay ? yieldInfo.detail : `Proceeds are ${inst.quote.code}: ${yieldInfo.detail}`}
       </p>
 
       <TrustlineNotice asset={inst.base} access={baseAccess} verb={form.side === "Ask" ? "deposit" : "receive"} showOk />

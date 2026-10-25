@@ -6,14 +6,14 @@ Prior art: the owner's EVM version (`lotus-main`, one-way ladders with JIT yield
 
 * Interface, types, invariants and the deployments file: [`docs/pool-abi.md`](../../docs/pool-abi.md) (kept in sync with this crate).
 * Live instances: [`deployments/testnet.pool.json`](../../deployments/testnet.pool.json) (the front end and the bot poll it).
-* Wasm: `lotus_pool.wasm` is about 36 KB (limit 128 KB).
+* Wasm: `lotus_pool.wasm` is 43.9 KB with all four stages (limit 128 KB); the stage A-C build, which two of the live instances run, was 36.5 KB.
 
 | stage | what | state |
 |---|---|---|
 | A | directional asks, shares + accumulators, sorted-by-bitmap book, `quote_swap`/`swap`, `claim`, `remove_position`, views, events | done, tested, deployed |
 | B | directional bids (QUOTE inventory, BASE proceeds), sell swaps | done, tested, deployed |
 | C | vault-backed QUOTE leg (DeFindex shares, yield accrues to the owning positions) | done, tested, deployed (own Blend vault) |
-| D | `Mode::TwoWay` (crossback LP) | see the status line at the end of this file |
+| D | `Mode::TwoWay` (crossback LP, DLMM-style bins, pools without a vault) | done, tested, deployed (`lbond-usdc-twoway`) |
 
 ## Interface
 
@@ -47,7 +47,7 @@ Bins are `-200..=200`; a position spans at most 64 bins, each non-zero share of 
 | 7 | NotOwner | claim/remove by someone who is not the owner |
 | 8 | NoLiquidity | the swap would move nothing |
 | 9 | SlippageExceeded | amount_out < min_out |
-| 10 | NotImplemented | `Mode::TwoWay` (unless stage D shipped, see below) |
+| 10 | NotImplemented | `Mode::TwoWay` on a pool that has a DeFindex vault (or on the stage A-C builds) |
 | 11 | Overflow | arithmetic overflow (checked everywhere) |
 | 12 | AmountTooSmall | a bin would get < 0.001 unit, or too little to mint a share |
 | 13 | BinDust | the bin is almost fully filled (remaining < 1e-6 of its shares): use another bin |
@@ -60,7 +60,7 @@ Authorization failures (`owner`, `taker`, `admin`) surface as host `Auth` errors
 
 | topics | data (map) |
 |---|---|
-| `["position_added", owner]` | `id, side, lo_bin, hi_bin, amount` |
+| `["position_added", owner]` | `id, side, lo_bin, hi_bin, amount` (read `get_position(id).mode` to tell a two-way position) |
 | `["position_removed", owner]` | `id, base, quote` |
 | `["claimed", owner]` | `id, base, quote` (only emitted when something was paid) |
 | `["swap", taker]` | `buy_base, amount_in, amount_out, fee, bins_crossed, last_bin` |
@@ -80,7 +80,7 @@ Every bin keeps `inventory`, `total_shares` and three per-share accumulators sca
 Invariants (each has a unit test):
 
 1. per bin, `inventory` never increases in a fill, `filled` and the accumulators never decrease (a new generation resets the accumulators but bumps `gen`);
-2. solvency: the pool's BASE balance covers every open position's remaining inventory plus pending BASE proceeds, and its QUOTE balance (plus vault shares at the current price) covers every Bid inventory, Ask proceeds and fees; checked after every operation of a deterministic pseudo-random sequence of adds, swaps, claims and removals, with and without a vault that accrues yield;
+2. solvency: the pool's BASE balance covers every open position's remaining inventory plus pending BASE proceeds, and its QUOTE balance (plus vault shares at the current price) covers every Bid inventory, Ask proceeds and fees; checked after every operation of deterministic pseudo-random sequences of adds, swaps, claims and removals: idle pools, pools with two-way positions, and vault pools where yield and small losses (a slash of the vault's underlying) are injected while positions are open. Extreme walks (`extreme_*`) cover the full grid, steps 1 to 100 bps, fees 0 to 1000 bps, 64-bin positions, zero weights, log-uniform amounts from 0.001 to 100,000 units, overlapping LPs on a few hot bins, and a vault seeded with only 50 USDC with yield and loss. There is no per-position fairness oracle (each payout is only checked to be at most what the view showed, and the pool to be solvent); building one would need a reference model of the whole book;
 3. every division rounds in the pool's favour: takers pay `ceil`, payouts are `floor`, accumulators are `floor`; the cost is at most about 1 stroop per bin per fill or claim, which stays in the pool as dust (never negative);
 4. `claim` then `remove_position` pays exactly once; a removed id cannot be claimed or removed again;
 5. `quote_swap` and `swap` share the same planner, so the quote is the swap result (asserted in the random walk).
@@ -111,12 +111,23 @@ With `vault = Some(v)` the pool keeps **QUOTE units** instead of QUOTE stroops: 
 
 DeFindex `get_asset_amounts_per_shares` updates a fee report inside the vault. From outside the contract, `quote_swap` (sell side), `get_position`, `get_bin` (Bid), `depth` (Bid) and `tvl` on a vault pool must be run with `simulateTransaction` and **never submitted** (the `stellar` CLI submits automatically when a simulation is not read-only: pass `--send=no`).
 
+## Two-way mode (stage D)
+
+`add_position(.., Mode::TwoWay, ..)` puts liquidity on both sides of each bin's price, like a Trader Joe LB / Meteora DLMM bin. A two-way bin holds a BASE reserve `x` and a QUOTE reserve `y` at one price `P`: `x` is for sale at `P` and `y` bids for BASE at `P`. A buyer's QUOTE lands in `y` (and the bin's BASE leaves `x`); a seller's BASE lands in `x` (and QUOTE leaves `y`). So when the price comes back through a bin that was sold through, the QUOTE it received buys the BASE back and the bin is refilled, and the LPs earn fees in both directions. This is the opposite of the directional mode, where proceeds are never re-offered.
+
+* `side` says which asset is deposited: `Ask` = BASE, `Bid` = QUOTE. A BASE deposit is meant for bins above the market, a QUOTE deposit for bins below it, which gives the DLMM layout (BASE above, QUOTE below, both only in the bin the price is crossing). The pool has no global "current price", so it does not check this; a deposit into a bin that already holds both assets gets a pro-rata slice of both (shares are minted against the bin's value in BASE at its price; the depositor effectively trades a bit of its deposit at the bin price without paying the fee, which only costs the other LPs some fee revenue, never principal).
+* Directional and two-way liquidity share the book. At each price the swap takes the directional bin first, then the two-way bin; each record counts as one bin for `max_bins_per_swap`. `get_bin` / `depth` add the two-way reserve to `inventory` (BASE on the Ask side, QUOTE on the Bid side); `total_shares` and `filled` are the directional bin's.
+* `Position` fields for a two-way position: `inventory` = BASE held now, `pending_proceeds` = QUOTE held now (both are reserves, only `remove_position` pays them out), `pending_fees` = claimable fees, `filled` = BASE traded through the position's bins in either direction. `claim` pays fees only; `remove_position` pays the position's slice of both reserves plus fees.
+* Fees, rounding and the dust sweep are the same as for directional bins; the fee is credited through the same per-share accumulator. There is no generation or `BinDust` concept for two-way bins (value is only moved between the two reserves), except that a bin that holds nothing but unclaimed fees refuses deposits until its LPs leave.
+* Only pools without a vault support it (`Config.supports_two_way`); on a vault pool `add_position` returns `NotImplemented`.
+* Tested: the crossback round trip with exact numbers (`two_way_crossback_round_trip`, reproduced on testnet in the same ledger-by-ledger numbers), merging with directional liquidity, late depositors, QUOTE deposits, the bin cap and slippage, and the same pseudo-random solvency walk as for the directional mode with two-way positions in the mix (5 seeds, plus coarse and fine grids and extreme fees).
+
 ## Build, test, deploy
 
 Requirements: Rust >= 1.84 with `wasm32v1-none`, `stellar` CLI 28.x.
 
 ```sh
-cargo test -p lotus_pool                  # 41 host tests (about 50 s, the random walks dominate)
+cargo test -p lotus_pool                  # 58 host tests (about 4 minutes, the random walks dominate); `-- --ignored` adds a deeper fuzz run
 cargo test                                # whole workspace
 stellar contract build --package lotus_pool
 stellar contract optimize --wasm target/wasm32v1-none/release/lotus_pool.wasm
@@ -170,7 +181,7 @@ LBOND has `AUTH_REQUIRED`. For a contract holder the Stellar Asset Contract trea
 
 ## Testnet instances and measured costs
 
-Addresses and tx hashes are in `deployments/testnet.pool.json`. Costs below are `simulateTransaction` with zero instruction leeway on testnet (limits per transaction: 400,000,000 instructions, 200 ledger entries read, 200 written, 132 KB); `fee` is the fee actually charged on-chain.
+Addresses and tx hashes are in `deployments/testnet.pool.json`: `lbond-usdc-idle` and `lbond-usdc-defindex` run the stage A-C build, `lbond-usdc-twoway` runs the final build (a superset; same swap costs within a few percent). Costs below are `simulateTransaction` with zero instruction leeway on testnet (limits per transaction: 400,000,000 instructions, 200 ledger entries read, 200 written, 132 KB); `fee` is the fee actually charged on-chain.
 
 Idle pool (`vault = null`):
 
@@ -199,6 +210,8 @@ Vault call count per swap, read from the diagnostic events of the on-chain trans
 
 ## Known limits and risks
 
+See also "Known limitations from review" below.
+
 * **Asset trust**: LBOND's issuer can freeze or claw back the pool's BASE (see above). USDC (Blend testnet) has no such flags.
 * **Vault liveness**: if the DeFindex vault cannot withdraw (Blend illiquid, vault paused), sells, `claim` and `remove_position` revert as a whole, including the removal of an Ask whose unfilled BASE is not in the vault, as soon as QUOTE is owed. There is no emergency exit. Buys still work (deposit path).
 * **Vault share price**: a vault with a tiny supply and a large donated balance mints zero shares for small deposits; the pool then reverts with `VaultShortfall` instead of crediting nothing. The testnet vault holds about 1,150 USDC in shares at a price close to 1.
@@ -209,3 +222,20 @@ Vault call count per swap, read from the diagnostic events of the on-chain trans
 * **No upgrade, no pause, no fee switch**: the admin can only change `max_bins_per_swap`.
 * Concurrent signers: the demo accounts are shared by several agents on testnet, so a CLI call can fail with `tx_bad_seq`; retry.
 * Not audited.
+
+## Stage status
+
+A, B, C and D are implemented, unit-tested (58 tests, 8 of them for two-way, 4 documenting limitations, plus an ignored deep fuzz) and deployed on testnet. Not done: two-way positions on a vault-backed pool, an emergency exit when the vault is illiquid, any upgrade path, an audit.
+
+`price-reference.mjs` is a BigInt reference for `price_at` (`node price-reference.mjs` checks all 2807 test vectors, 0 mismatches) that the front end and the bot can copy.
+
+## Known limitations from review
+
+An independent adversarial review found no solvency or payout bug. It found these limits, which are real and are not fixed in this build (tests named `limitation_*` assert the current behaviour):
+
+* **(a) LBOND leg dependency.** `claim` and `remove_position` pay BASE first and revert as a whole. A Bid LP whose LBOND authorization is revoked, or any Bid LP with BASE proceeds after the issuer claws back the pool's LBOND, cannot withdraw even the USDC leg until it is re-authorized (an Ask LP cannot remove either after a clawback). This follows from the issuer's compliance powers over LBOND. Roadmap fix: a quote-only exit, or an unpaid-BASE credit.
+* **(b) Shared-vault footprint race.** A transaction that withdraws from the shared DeFindex vault (sell, `claim`, `remove_position` on a vault pool) can fail with `Error(Storage, ExceededLimit)` when the vault's idle USDC flips between 0 and 1 stroop between simulation and inclusion (other users of the same vault, such as `lotus_vault`, change the footprint). This explains the failed `remove_position` `a05a511e...` on `lbond-usdc-defindex`. Clients must simulate right before signing, and re-simulate and resend once or twice on that error.
+* **(c) Two-way fee sniping.** Depositing into a mixed two-way bin and withdrawing right away is a fee-free swap at the bin price (just-in-time liquidity). It costs the other LPs fee income, not principal.
+* **(d) Junk bins.** Dust bins (0.001 unit each) count against `max_bins_per_swap`, so a spammer can make a swap spend its whole bin budget on them. Takers are protected by `min_out`; they can retry until the junk is consumed.
+* **(e) Accounting edges.** The pool's tracked vault shares (`QuoteShares`) are not reconciled with `vault.balance(pool)`, so excess withdrawal proceeds stay as unaccounted idle QUOTE. `quote_rate` panics (`VaultShortfall`) if the pool's shares are worth less than 1 stroop. Persistent entries are only bumped on write, so a bin that is only read (for example by `claim`) is not extended.
+* **(f) Source of the two older instances.** `lbond-usdc-idle` and `lbond-usdc-defindex` were deployed from an earlier build of this crate without `TwoWay`, and their exact source is not preserved in git (the repository was first committed after they were deployed). Only `lbond-usdc-twoway` is built from the committed source (wasm hash `e3e966eb...`). The tests cover the committed source; the older instances differ from it in the two-way code and the planner refactor, which the same unit tests were run against before and after.

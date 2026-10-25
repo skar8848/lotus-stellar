@@ -19,7 +19,9 @@
     "bot": "node bot/index.mjs",
     "bot:setup": "node bot/setup.mjs",
     "bot:depeg": "node bot/index.mjs --scenario depeg",
-    "bot:demo": "node bot/index.mjs --scenario demo"
+    "bot:demo": "node bot/index.mjs --scenario demo",
+    "bot:cross": "node bot/index.mjs --scenario cross-venue",
+    "bot:keeper": "node bot/index.mjs --scenario keeper"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.4.0"

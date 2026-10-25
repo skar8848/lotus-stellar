@@ -48,13 +48,25 @@ export function MyPositions({
   };
 
   const rows = positions.data ?? [];
-  // Ask: inventory BASE, proceeds+fees QUOTE. Bid: inventory QUOTE, proceeds BASE, fees QUOTE.
-  const unit = (p: Position, what: "inventory" | "proceeds") => (what === "inventory" ? (p.side === "Ask" ? inst.base.code : inst.quote.code) : p.side === "Ask" ? inst.quote.code : inst.base.code);
+  // Directional Ask: inventory BASE, proceeds+fees QUOTE. Directional Bid: inventory QUOTE, proceeds BASE, fees QUOTE.
+  // Two-way (either side): inventory = BASE held now, pending_proceeds = QUOTE held now, fees QUOTE.
+  const unit = (p: Position, what: "inventory" | "proceeds") =>
+    p.mode === "TwoWay"
+      ? what === "inventory"
+        ? inst.base.code
+        : inst.quote.code
+      : what === "inventory"
+        ? p.side === "Ask"
+          ? inst.base.code
+          : inst.quote.code
+        : p.side === "Ask"
+          ? inst.quote.code
+          : inst.base.code;
 
   return (
     <Panel
       title="My positions"
-      subtitle="Directional: inventory only goes down, proceeds only go up. Claim pays proceeds and fees and keeps the position; Remove returns the unfilled rest and closes it."
+      subtitle="Directional positions: inventory only goes down, proceeds only go up. Two-way positions hold both assets and trade both ways. Claim keeps the position (two-way: fees only); Remove closes it and pays everything."
       right={inst.contract ? <ExplorerLink kind="contract" id={inst.contract} network={network} label="pool contract" n={4} className="text-xs" /> : null}
     >
       {!wallet.address ? (
@@ -75,21 +87,28 @@ export function MyPositions({
                 <th className="py-1 pr-2 font-normal">ID</th>
                 <th className="py-1 pr-2 font-normal">Side</th>
                 <th className="py-1 pr-2 font-normal">Range</th>
-                <th className="py-1 pr-2 text-right font-normal">Inventory left</th>
+                <th className="py-1 pr-2 text-right font-normal">Inventory / held</th>
                 <th className="py-1 pr-2 text-right font-normal">Filled</th>
-                <th className="py-1 pr-2 text-right font-normal">Pending</th>
+                <th className="py-1 pr-2 text-right font-normal">Pending / fees</th>
                 <th className="py-1 text-right font-normal" />
               </tr>
             </thead>
             <tbody>
               {rows.map((p) => {
+                const twoWay = p.mode === "TwoWay";
+                const depCode = p.side === "Ask" ? inst.base.code : inst.quote.code;
                 const filledPct = p.deposited > 0n ? Number((p.filled * 1000n) / p.deposited) / 10 : 0;
                 const lo = Number(priceAt(p.loBin, inst.binStepBps)) / 1e7;
                 const hi = Number(priceAt(p.hiBin, inst.binStepBps)) / 1e7;
                 return (
                   <tr key={String(p.id)} className="border-t border-border" data-testid="pool-position-row" data-position-id={String(p.id)}>
                     <td className="num py-1.5 pr-2">#{String(p.id)}</td>
-                    <td className={cn("py-1.5 pr-2 font-medium", p.side === "Ask" ? "text-red" : "text-green")}>{p.side}</td>
+                    <td className={cn("py-1.5 pr-2 font-medium", p.side === "Ask" ? "text-red" : "text-green")}>
+                      {p.side}
+                      <span className="block text-[10px] font-normal text-mutedfg" data-testid="position-mode">
+                        {twoWay ? "two-way" : "directional"}
+                      </span>
+                    </td>
                     <td className="num py-1.5 pr-2">
                       {fmt(lo, 4, 4)} to {fmt(hi, 4, 4)}
                       <span className="block text-[10px] text-mutedfg">
@@ -97,25 +116,49 @@ export function MyPositions({
                         {p.vaulted ? " · USDC in DeFindex" : ""}
                       </span>
                     </td>
-                    <td className="num py-1.5 pr-2 text-right">
+                    <td className="num py-1.5 pr-2 text-right" data-testid={twoWay ? "twoway-holdings" : undefined}>
                       {fmt(fromStroops(p.inventory), 2)} {unit(p, "inventory")}
+                      {twoWay ? (
+                        <span className="block">
+                          {fmt(fromStroops(p.pendingProceeds), 2)} {inst.quote.code}
+                          <span className="block text-[10px] text-mutedfg">both held now (deposited {fmt(fromStroops(p.deposited), 2)} {depCode})</span>
+                        </span>
+                      ) : null}
                     </td>
                     <td className="num py-1.5 pr-2 text-right">
-                      <span className="text-green">{fmt(filledPct, 1)}%</span>
-                      <span className="block text-[10px] text-mutedfg">
-                        {fmt(fromStroops(p.filled), 2)} {unit(p, "inventory")}
-                      </span>
+                      {twoWay ? (
+                        <>
+                          {fmt(fromStroops(p.filled), 2)} {inst.base.code}
+                          <span className="block text-[10px] text-mutedfg">traded through, both ways</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-green">{fmt(filledPct, 1)}%</span>
+                          <span className="block text-[10px] text-mutedfg">
+                            {fmt(fromStroops(p.filled), 2)} {unit(p, "inventory")}
+                          </span>
+                        </>
+                      )}
                     </td>
                     <td className="num py-1.5 pr-2 text-right">
-                      {fmt(fromStroops(p.pendingProceeds), 4)} {unit(p, "proceeds")}
-                      <span className="block text-[10px] text-mutedfg">+ {fmt(fromStroops(p.pendingFees), 4)} {inst.quote.code} fees</span>
+                      {twoWay ? (
+                        <>
+                          {fmt(fromStroops(p.pendingFees), 4)} {inst.quote.code}
+                          <span className="block text-[10px] text-mutedfg">fees (Claim pays fees only)</span>
+                        </>
+                      ) : (
+                        <>
+                          {fmt(fromStroops(p.pendingProceeds), 4)} {unit(p, "proceeds")}
+                          <span className="block text-[10px] text-mutedfg">+ {fmt(fromStroops(p.pendingFees), 4)} {inst.quote.code} fees</span>
+                        </>
+                      )}
                     </td>
                     <td className="py-1.5 text-right">
                       <div className="flex justify-end gap-1.5">
                         <Button
                           size="xs"
                           variant="outline"
-                          disabled={claimTx.running || removeTx.running || (p.pendingProceeds === 0n && p.pendingFees === 0n)}
+                          disabled={claimTx.running || removeTx.running || (twoWay ? p.pendingFees === 0n : p.pendingProceeds === 0n && p.pendingFees === 0n)}
                           onClick={() => act("claim", p)}
                           data-testid={`pool-claim-${p.id}`}
                         >

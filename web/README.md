@@ -65,6 +65,18 @@ lists an instance the page runs the simulation (clearly labelled, nothing is sen
 exists the same UI talks to the contract. `lib/poolGrid.ts` replicates `price_at(bin) = round(1e7 * (1 + step/10000)^bin)`
 with BigInt and is checked against `contracts/lotus_pool/test-vectors.json` by `npm run test:unit`.
 
+Pool instances (`testnet.pool.json`): `lbond-usdc-idle`, `lbond-usdc-defindex` (USDC parked in our DeFindex vault) and
+`lbond-usdc-twoway`. Fees follow ABI v1: charged on top of the price leg (a buyer pays ceil(q) + fee, a seller gets
+floor(q) - fee), so the pool quote and the venue comparison use the contract's own `quote_swap` (`avg_price` includes
+the fee). `max_bins_per_swap` (100) comes from `get_config`, `abi_version()` is checked (a banner appears if it is not 1).
+
+**Two-way LP** (`Mode::TwoWay`, classic LP with crossback): the switch in the builder is enabled per instance from
+`supports_two_way`, and only on pools without a DeFindex vault (the contract answers `NotImplemented` otherwise;
+the UI says why). Copy is explicit: a two-way position earns fees in both directions and bins refill when the price
+comes back, but it can end up holding mostly the other asset; directional positions never flip back. In My positions
+and on /portfolio a two-way row shows both holdings (`inventory` = BASE held now, `pending_proceeds` = QUOTE held now),
+the traded volume and the fees; Claim pays fees only, Remove pays both reserves plus fees.
+
 Position builder: side **Ask** (sell LBOND as the price rises) or **Bid** (buy LBOND as the price falls), price
 range converted to grid bins (max 64 bins per position, 0.001 minimum per bin, as in the contract), weight shape,
 amount, mode **Directional** (default) or **Two-way LP** (disabled unless the pool reports `supports_two_way`),
@@ -112,7 +124,8 @@ npm run test:unit                              # range + pool grid math
 NEXT_DIST_DIR=.next-3200 npx next dev -p 3200 & # a dev server for the browser tests
 node e2e/setup-env.mjs                          # once: dev keys into .env.local
 node e2e/run-flows.mjs                          # SDEX + vault flows on testnet, verified on Horizon
-node e2e/pool-flows.mjs                         # pool flows (live contract, or the local simulation)
+node e2e/pool-flows.mjs                         # directional pool flows (POOL=<instance id> to pick one; live contract or local simulation)
+POOL=lbond-usdc-twoway TWOWAY=1 node e2e/pool-flows.mjs   # two-way round trip: add, swap through, swap back, claim fees, remove
 node e2e/portfolio-check.mjs                    # portfolio UI checks (no transactions)
 node e2e/shots.mjs --path /trade --name trade --wallet maker --full   # screenshot helper
 ```
@@ -146,6 +159,15 @@ web/
 
 - Every address, contract, asset, tx hash and offer id links to stellar.expert (testnet) with an external-link
   icon (`lib/explorer.ts`, `ExplorerLink` / `AssetLink` in `components/common.tsx`).
+- Vault-pool views (`quote_swap` sell, `get_position`, `get_bin` Bid, `depth` Bid, `tvl`) and `vault_value()`/`surplus()`
+  call a DeFindex view that writes a fee report: the app only ever runs them through `simulateTransaction`.
+- **Retries in `invokeContract` (`lib/stellar.ts`, classification in `lib/txErrors.ts`, tested in `tests/tx-errors.test.mts`)**:
+  every attempt simulates again right before signing. `txBadSeq` is retried once, `TRY_AGAIN_LATER` resends the same signed
+  transaction up to 3 times, and a `tx_failed` caused by a footprint race (`Error(Storage, ExceededLimit)` / trapped) is
+  re-simulated, re-signed and resent up to 2 times, then reported as "The vault state changed while signing, retry".
+  Why: calls that withdraw from the SHARED DeFindex vault (pool sell swaps, claim and remove on the vault pool, lotus_vault
+  redeem) read an entry other users also change (the vault's idle USDC flips between 0 and 1 stroop), so the transaction can
+  touch a ledger entry outside the simulated footprint. A hardware or extension wallet asks to sign again on such a retry.
 - A classic transaction cannot mix with a Soroban invocation, which is why "add trustline + deposit" is two signatures.
 - Horizon quirk handled in `lib/book.ts`: order-book bid amounts are in the counter asset, ask amounts in the base.
 - `deposit()` on the Lotus vault returns DeFindex shares, not the minted amount: the UI states the 1:1 mint from

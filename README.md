@@ -1,185 +1,192 @@
 # Lotus
 
-Yield-bearing liquidity for Stellar's native orderbook (SDEX).
+Directional liquidity and yield-bearing orders for Stellar.
 
-Lotus wraps USDC into `lUSDC`, a classic Stellar asset whose backing is lent on Blend through a DeFindex vault. Because an SDEX offer never moves funds out of the account, a limit order quoted in lUSDC keeps earning while it waits in the book. Idle orders become productive capital.
+Lotus is two products that work together:
 
-Built at HackMeridian (Lisbon, 25-26 October 2026), Path Genesis, tracks Stellar Unlocked and Stellar Composed. Everything in this repository runs on Stellar testnet; nothing is deployed on mainnet.
+1. **The Lotus pool** (`lotus_pool`, Soroban): a range pool on a grid of price bins where a liquidity provider chooses a direction. A directional position only sells its inventory and only receives proceeds; nothing trades back. The quote leg can optionally sit in a DeFindex vault that lends on Blend, so resting liquidity earns while it waits and is recalled just in time by the taker's own swap.
+2. **The receipt token** (`lotus_vault`, Soroban, plus `lUSDCb` / `lUSDC`, classic assets): USDC deposited into a DeFindex vault comes back as a classic Stellar asset at 1:1. Classic assets can be quoted on the SDEX, and an SDEX offer never moves funds out of the account, so a limit order quoted in the receipt keeps earning Blend interest while it waits in the book.
+
+Built at HackMeridian (Lisbon, 25-26 October 2026), Path Genesis, tracks Stellar Unlocked and Stellar Composed. **Everything in this repository runs on Stellar testnet; nothing is deployed on mainnet and nothing is audited.**
+
+The first Lotus, a one-way directional-liquidity AMM, won the Uniswap track at ETHGlobal New York 2026. This is a new implementation on Stellar, written during HackMeridian; no EVM code is reused.
 
 ## The problem
 
-Orderbooks need depth. Depth comes from resting orders, and a resting order is capital that does nothing while it waits. The people who could provide depth, issuers with inventory and treasuries with cash, have the least reason to: a resting bid earns nothing, and an AMM position forces them into round trips they do not want (buy low, get sold back the asset higher, hold whatever the market leaves them). Call it the big-holder paradox: the holders who own the inventory and the cash are the ones who could fix depth, and they are the ones with the least incentive to park capital in a book.
+Depth is idle capital. A resting order earns nothing, and an AMM position forces the holder into round trips they do not want (buy low, get sold back the asset higher, hold whatever the market leaves). The holders who own the inventory and the cash, issuers and treasuries, are the ones who could provide depth and have the least reason to.
 
-The assets that suffer most are the ones that need a book: tokenized bonds and other real-world assets, which trade by appointment and in size.
+Stellar has a specific version of this. The network already carries yield-bearing RWAs (Ondo USDY, Etherfuse Stablebonds). The asset side of a bond pair earns while it sits; the quote side, USDC, does not.
 
-Stellar has a specific version of this. The network already carries yield-bearing RWAs (Ondo's USDY launched on Stellar in September 2025; Etherfuse Stablebonds such as CETES trade on SDEX). The asset side of a bond pair earns while it sits. The quote side, the USDC, does not.
-
-## The primitive
-
-Lotus makes the quote side earn.
-
-- `lUSDC` is a classic Stellar asset. The admin of its Stellar Asset Contract (SAC) is a Soroban contract, `lotus_vault`, which is the only minter and tracks supply.
-- `deposit`: the user sends USDC to the contract; the contract deposits it into a DeFindex vault that lends on Blend, and mints lUSDC 1:1.
-- `redeem`: the user sends lUSDC back; the contract burns it, withdraws from the vault and returns USDC. Payment is 1:1 while the position is fully backed, and pro-rata if the vault position has ever lost value.
-- `distribute` (keeper-only): the keeper submits a list of holders and amounts. Every amount is capped on-chain by `surplus * balance / supply`, where `surplus` is the vault's value above outstanding lUSDC supply, and the total cannot exceed the surplus. The keeper can omit a holder; it cannot over-mint, and it cannot send one holder's yield to another. The admin can rotate the keeper with `set_keeper`.
-
-Read-only entry points `supply`, `vault_value` and `surplus` expose the accounting, so anyone can check that outstanding lUSDC is backed. The exact interface is in [contracts/README.md](contracts/README.md).
-
-A holder's lUSDC balance includes the amount committed to open offers, because on Stellar an offer is recorded as a selling liability on the account, not as a transfer. The maker whose bids sit in the book therefore earns exactly what a passive holder earns.
-
-One-way behaviour comes for free. On an orderbook a filled offer never trades back. The first Lotus (a one-way directional-liquidity pool that won the Uniswap track at ETHGlobal New York 2026) had to build that property into a custom AMM. On Stellar the orderbook already is the one-way venue; Lotus only has to make the capital inside it productive.
-
-## How it works
+## Architecture
 
 ```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 80, "rankSpacing": 120}}}%%
-flowchart LR
-    MAKER["Maker"]
-    TAKER["Taker<br/>pays in USDC"]
-    SDEX["SDEX<br/>native orderbook"]
-    LOTUS["LOTUS<br/>mints lUSDC 1:1"]
-    DFX["DeFindex"]
-    BLEND["Blend<br/>lending"]
-    MAKER -- "USDC" --> LOTUS
-    LOTUS -- "lUSDC" --> MAKER
-    LOTUS <-- "backing" --> DFX
+%%{init: {"flowchart": {"nodeSpacing": 70, "rankSpacing": 90}}}%%
+flowchart TB
+    subgraph CLASSIC["Stellar classic layer"]
+        SDEX["SDEX orderbook<br/>LBOND / lUSDCb and USDC / lUSDCb<br/>offers + path payments"]
+        ASSETS["Classic assets<br/>LBOND (AUTH_REQUIRED, clawback), USDC, lUSDCb"]
+    end
+    subgraph SOROBAN["Soroban layer"]
+        POOL["lotus_pool<br/>directional bins<br/>Ask / Bid, optional two-way"]
+        VAULT["lotus_vault<br/>deposit / redeem / distribute<br/>SAC admin of lUSDCb"]
+        DFX["DeFindex vault"]
+        BLEND["Blend<br/>lending"]
+    end
+    BOT["Local bot<br/>market makers + arbitrageur"]
+    ASSETS --- SDEX
+    VAULT -- "mints / burns" --> ASSETS
+    VAULT <-- "backing" --> DFX
+    POOL <-- "optional USDC leg" --> DFX
     DFX -- "lend" --> BLEND
-    MAKER -- "ladder of offers<br/>(earns yield while waiting)" --> SDEX
-    TAKER -- "path payment<br/>USDC → lUSDC → LBOND" --> SDEX
-    LOTUS -. "yield minted to holders<br/>(incl. open offers)" .-> MAKER
+    BOT -. "quotes, flow, arbitrage" .-> SDEX
+    BOT -. "pool legs, cross-venue arb" .-> POOL
+    BOT -. "par deposit / redeem (peg)" .-> VAULT
 ```
 
-Two SDEX pairs are seeded on testnet:
+The two venues for the same pair are linked off-chain by an arbitrageur and on-chain only through shared assets and the DeFindex vault. Prices on the pool and on the SDEX are free to differ; the bot closes the gap.
 
-| Pair | Role |
-|---|---|
-| `LBOND/lUSDC` | The RWA market. `LBOND` is a simulated tokenized bond, a classic asset issued with `AUTH_REQUIRED`, `AUTH_REVOCABLE` and `AUTH_CLAWBACK_ENABLED`. Only authorized trustlines can hold it. An unauthorized taker's trade fails at the protocol level; no contract logic is involved. |
-| `USDC/lUSDC` | The peg book, quoted at 1:1. Anyone can deposit or redeem at par through the contract, so any deviation is an arbitrage against the vault and the book stays honest. |
+## Product 1: the Lotus pool
 
-A taker who holds only USDC buys LBOND with one path payment, USDC -> lUSDC -> LBOND, in a single transaction. The taker never needs to know lUSDC exists, so quoting in lUSDC does not fragment liquidity from the taker's point of view.
+`contracts/lotus_pool/`. Full interface in [docs/pool-abi.md](docs/pool-abi.md), accounting and invariants in [contracts/lotus_pool/README.md](contracts/lotus_pool/README.md).
 
-The flow for a maker:
+- **Bins.** Price at bin `n` is `1 * (1 + step)^n`, step 10 bps by default, bins -200 to 200, up to 64 bins per position. A swap walks the book through a bitmap of non-empty bins, at most 100 bins per call.
+- **Directional by design.** `Side::Ask` deposits the base asset (LBOND) and receives USDC as it sells; `Side::Bid` deposits USDC and receives LBOND as it buys. Inventory only goes down and proceeds can never be bought back. The LP chooses this at `add_position`.
+- **Optional two-way mode** (`Mode::TwoWay`, on a pool without a vault): DLMM-style bins that hold both assets, so a position can cross back when the price returns, for LPs who want Uniswap-like behaviour. Directional and two-way liquidity share the same book; at each price the swap takes directional liquidity first.
+- **Optional yield vault.** A pool instance can hold its whole USDC leg (bid inventory, ask proceeds, fees) as DeFindex vault shares, so it earns Blend interest without any keeper. A buy swap deposits the taker's USDC; a sell swap withdraws exactly what the taker is owed, just in time. The yield strategy is a property of the pool instance: one instance per strategy (`deployments/testnet.pool.json`).
+- **Fees.** 10 bps charged on top of the price leg and credited to the bin's LPs; the LP still receives its exact limit price.
+- **Size.** 43.9 KB wasm (limit 128 KB). 58 unit tests plus a randomized solvency fuzz, an adversarial review with no solvency or overpay bug found, and known limitations written down (see Limitations).
 
-1. Deposit USDC, receive lUSDC.
-2. Post a ladder of bids on `LBOND/lUSDC` (and asks, if the maker holds LBOND). The lUSDC stays in the account as selling liabilities.
-3. A keeper calls `distribute` periodically. The maker's lUSDC balance grows while the offers stay open.
-4. When a bid fills the maker holds LBOND; when an ask fills the maker holds lUSDC that is already earning.
-5. Redeem lUSDC for USDC at par whenever needed.
+Three live testnet instances, all LBOND/USDC:
+
+| instance | yield | mode | contract |
+|---|---|---|---|
+| `lbond-usdc-idle` | none (USDC stays in the pool) | directional | [`CDOXTKGM…TN6CF`](https://stellar.expert/explorer/testnet/contract/CDOXTKGMK7MHEIOVXN5OBETMFUQATRQCB5NHFBFKCVUF5OUHQHVTN6CF) |
+| `lbond-usdc-defindex` | Blend, through our DeFindex vault | directional | [`CDNG7T2K…ZFPNG`](https://stellar.expert/explorer/testnet/contract/CDNG7T2KSDQ7ZYXHSDAM63RLLVPCQ5V6T5GRTXOOX47EZEMU636ZFPNG) |
+| `lbond-usdc-twoway` | none | directional and two-way | [`CC264FOW…SEI`](https://stellar.expert/explorer/testnet/contract/CC264FOWPI5R5FG4276ZIPGJ5OG5AP3IZ4RZNMC2KQNJDA7LQSFQ3SEI) |
+
+## Product 2: the receipt token on the SDEX
+
+`contracts/lotus_vault/`. Interface in [contracts/README.md](contracts/README.md).
+
+- The receipt (`lUSDCb` on the active deployment, `lUSDC` on the older one) is a **classic Stellar asset**. The admin of its Stellar Asset Contract is the `lotus_vault` Soroban contract, which mints on deposit and distribution and burns on redeem, and tracks supply.
+- `deposit`: USDC goes into a DeFindex vault that lends on Blend; the receipt is minted 1:1.
+- `redeem`: the receipt is burned, the vault is withdrawn from, USDC is returned. 1:1 while fully backed, pro rata if the vault position ever lost value.
+- `distribute` (keeper only): the keeper submits holders and amounts; every amount is capped on-chain by `surplus * balance / supply`, and the total cannot exceed the surplus. The keeper can omit a holder; it cannot over-mint or redirect yield. Balances locked in open SDEX offers count, because an offer is a selling liability, not a transfer.
+- Two SDEX pairs: `LBOND/lUSDCb` (the RWA market) and `USDC/lUSDCb` (the peg book at 1:1, kept honest by par deposit and redeem). A taker holding only USDC buys LBOND with one path payment, USDC -> receipt -> LBOND, and never has to know the receipt exists.
+- `LBOND` is a simulated tokenized bond issued with `AUTH_REQUIRED`, `AUTH_REVOCABLE` and clawback. An unauthorized taker's trade fails at the protocol level (`op_not_authorized`); the pool contract itself is authorized by the issuer through the LBOND SAC.
+
+## The app
+
+`web/`, Next.js 16, the look of the previous Lotus front (black, soft pink `#F3B1CE`, pro-mode range builder). Three pages:
+
+- **Trade**: the front of the SDEX. Market selector, candles and depth, order book, recent trades; Swap (path payment), Limit, and Range (a ladder of up to 50 offers in one transaction, one-way sell, one-way buy or two-sided band); open offers with Cancel.
+- **Pools**: the Lotus pool (instance picker, depth by bin, range builder for directional and two-way positions, claim and remove, pool swap with a venue comparison against the SDEX) and the vault tab (strategy cards, deposit and redeem, yield explainer).
+- **Portfolio**: balances (available versus committed to offers), open offers, receipts per vault, pool positions, activity, with explorer links on every address, asset and transaction.
+
+Any Stellar Wallets Kit wallet works (Freighter, xBull, Albedo, Lobstr, Hana). A dev-only secret-key signer, gated by an environment variable, was used for headless testing. See [web/README.md](web/README.md).
+
+## Where the volume comes from
+
+The trades you see on the Lotus testnet markets come from three accounts run by the Lotus team (`mm_a`, `mm_b`, `arb`, listed in [deployments/testnet.bot.json](deployments/testnet.bot.json)): two market makers quoting and trading against each other, and an arbitrageur. They trade real on-chain transactions with assets the team issues (LBOND) or mints through `lotus_vault` (the receipt, minted against Blend testnet USDC from the public faucet). **It is market-maker volume, not user volume.** Nobody else uses these markets yet, it is a testnet, and we say so. See [scripts/bot/README.md](scripts/bot/README.md).
+
+Measured runs of the bot (testnet, 25 October 2026):
+
+- A depeg of the receipt to 0.985 was restored by the arbitrageur in 10 to 12 seconds on both vault deployments. The arbitrageur's profit in those scenarios is a transfer from the account that created the dislocation, not revenue.
+- A cross-venue dislocation between the pool and the SDEX was closed in 26 seconds.
+- The scripted demo run lasts about 167 seconds with 25 flow trades and ends with a keeper distribution that minted real interest to 6 holders.
+- Two 10-minute runs: 0 failed transactions, 0 HTTP 429, about 0.52 XLM spent in total.
+
+## Why there is real yield on testnet (v2), and why there was none before
+
+The Blend testnet pool is real and pays real supply interest. The DeFindex testnet USDC vault that existed (PaltaLabs, v1) never earned: DeFindex invests a deposit in proportion to the vault's existing allocation and skips an asset with nothing invested yet, and only the vault's rebalance manager can seed it. So deposits stayed idle. For v2 we created our own DeFindex vault through the testnet factory and seeded it into the Blend strategy with one `rebalance`; every later deposit is invested in full. Observed over two windows totalling about 34 minutes: 6.9 percent APR gross (the pool's `b_rate` growth). That rate follows Blend's testnet utilization (88.7 percent at the time; at 70 percent the rate model gives about 1.6 percent), so it is an observation, not a forecast. BLND emissions are not included.
+
+## Testnet deployment
+
+Addresses live in `deployments/`: `testnet.contract.json` (active vault), `testnet.strategies.json` (every strategy), `testnet.pool.json` (pool instances), `testnet.classic.json` (RWA, demo accounts, offers), `testnet.bot.json` (bot accounts). If this README and those files disagree, the files win.
+
+| | v2 `usdc-defindex-blend` (active, live yield) | v1 `usdc-defindex-idle` (kept for comparison) |
+|---|---|---|
+| `lotus_vault` | [`CCCZ6XUD…2QKG`](https://stellar.expert/explorer/testnet/contract/CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG) | [`CA5JHSNN…AHG6`](https://stellar.expert/explorer/testnet/contract/CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6) |
+| Receipt asset (classic, SAC admin = the contract) | `lUSDCb`, issuer `GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO` | `lUSDC`, issuer `GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6` |
+| DeFindex vault | [`CDCIDX5F…Q7EEC`](https://stellar.expert/explorer/testnet/contract/CDCIDX5FXOENXW4ODR2D7QMRKL4F2NTZYFVZEFF63GTNRVVDXLCQ7EEC) (ours, seeded into Blend, fee 0) | `CBMVK2JK…DWHN` (PaltaLabs, allocation 0: idle) |
+| Yield | real Blend interest | none |
+
+Shared: Blend testnet USDC `USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56`, Blend pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`, LBOND issuer `GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF`. `deployments/switch-strategy.sh v1|v2|status` swaps the active vault.
+
+Verification: v2 end to end with real interest (deposits of 100, 50 and 100 USDC fully invested, a `distribute` that minted real interest pro rata, a redeem of 50 `lUSDCb` paying exactly 50 USDC through the Blend withdrawal), v1 smoke test including an over-cap distribution rejected with `ExceedsCap`, pool smoke tests on every instance, a path payment on v2 that delivered 152.49 LBOND, and `blocked_taker` rejected with `op_not_authorized`. Transaction hashes are in the `deployments/*.json` files.
+
+Measured costs: Soroban calls on testnet, including those that touch Blend, cost 0.0015 to 0.14 XLM. A withdraw from the DeFindex Blend strategy used about 3.5M CPU instructions of 400M and 13 of 200 ledger entries. Mainnet cost is unmeasured. (An earlier single measurement of about 100 XLM per Blend call did not reproduce and is retracted.)
 
 ## Stellar features used
 
-| Feature | Where it is used |
+| Feature | Where |
 |---|---|
-| SDEX offers and liabilities | Ladders of `manage_sell_offer` / `manage_buy_offer`. Offers reserve funds as selling liabilities instead of moving them, which is what lets an open order keep earning. |
-| Path payments | `path_payment_strict_send` USDC -> lUSDC -> LBOND. One transaction, the taker pays in USDC. |
-| Classic assets with a contract as admin | lUSDC is a classic asset. Its SAC admin is set to `lotus_vault` (`set_admin`), which mints on deposit and distribution and burns on redeem. |
-| Asset authorization flags and clawback | The LBOND issuer sets `AUTH_REQUIRED`, `AUTH_REVOCABLE` and `AUTH_CLAWBACK_ENABLED`. Compliance is enforced by the protocol, not by the venue. |
-| Soroban smart contract | `lotus_vault`: deposit, redeem, capped distribution, supply accounting, vault integration. |
-| Horizon | Orderbook, trades, offers and account liabilities for the app and the demo. |
-
-## Ecosystem tools used
-
-- DeFindex: the vault the contract deposits into. It allocates the USDC to a Blend strategy.
-- Blend: the lending market where the USDC earns.
-
-On testnet the vault and pool are the testnet deployments of those protocols. See the deployment files for the exact addresses.
+| SDEX offers and liabilities | Ladders of `manage_sell_offer`. Offers reserve funds as selling liabilities, which is what lets an open order keep earning. |
+| Path payments | `path_payment_strict_send` USDC -> receipt -> LBOND, one transaction. |
+| Classic asset with a contract as admin | The receipt's SAC admin is `lotus_vault`. |
+| Asset authorization and clawback | LBOND `AUTH_REQUIRED`, `AUTH_REVOCABLE`, `AUTH_CLAWBACK_ENABLED`; the pool must be authorized through the LBOND SAC. |
+| Soroban | `lotus_pool` (range pool), `lotus_vault` (receipt wrapper), a mock vault for tests. |
+| Ecosystem | DeFindex vaults, Blend lending. |
+| Horizon | Orderbook, trades, offers, liabilities for the app and the bot. |
 
 ## Repository layout
 
 ```
-contracts/      Soroban workspace: lotus_vault (the contract) and mock_vault
-                (a DeFindex-like vault used in tests)
-scripts/        Numbered testnet scripts (Node 20+, @stellar/stellar-sdk): demo accounts,
-                RWA issuance and flags, receipt minting, SDEX seeding, path-payment demo,
-                yield simulation, distribution keeper
-web/            Next.js app: deposit / redeem, ladder view, yield display
-deployments/    Testnet addresses: testnet.contract.json (contract, assets, roles) and
-                testnet.classic.json (RWA asset, demo accounts, offers, tx hashes).
-                Secret keys are gitignored.
-docs/           Pitch deck, demo script, submission answers, FAQ for judges
+contracts/      Soroban workspace: lotus_pool, lotus_vault, mock_vault (DeFindex-like, for tests)
+scripts/        Numbered testnet scripts (Node 20+, @stellar/stellar-sdk), lib/, and bot/
+                (market makers, flow, arbitrageur, keeper step, scenarios)
+web/            Next.js app: /trade, /pools, /portfolio
+deployments/    Testnet addresses (public). Secret keys are gitignored (*.secrets.json)
+docs/           Pool ABI, pitch deck, demo script, submission answers, FAQ for judges
 ```
 
 ## Quick start
 
-Each part has its own README with the exact commands: [contracts/README.md](contracts/README.md), [scripts/README.md](scripts/README.md), [web/README.md](web/README.md). The outline:
+Each part has its own README: [contracts/README.md](contracts/README.md), [contracts/lotus_pool/README.md](contracts/lotus_pool/README.md), [scripts/README.md](scripts/README.md), [scripts/bot/README.md](scripts/bot/README.md), [web/README.md](web/README.md).
 
 ```sh
-# Contracts. Requires Rust 1.84+, the wasm32v1-none target and the stellar CLI.
+# Contracts. Rust 1.84+, wasm32v1-none target, stellar CLI.
 stellar contract build
-cargo test
+cargo test --workspace
 
-# Scripts (Node 20+). The aliases below run the numbered scripts in order;
-# arguments and details are in scripts/README.md.
+# Scripts (Node 20+). Aliases run the numbered scripts in order.
 cd scripts && npm install
-npm run wait     # wait for deployments/testnet.contract.json
 npm run setup    # create and fund the demo accounts
-npm run issue    # issue the simulated RWA with authorization and clawback flags
-npm run mint     # deposit the underlying, receive the receipt token
-npm run seed     # post the RWA ladder and the peg book on SDEX
-npm run take     # taker buys the RWA with USDC through a path payment
-npm run yield    # testnet only: simulate accrued yield in the vault position
-npm run keeper   # distribute the surplus to holders, capped on-chain
+npm run issue    # issue LBOND with authorization and clawback flags
+npm run mint     # deposit USDC, receive the receipt
+npm run seed     # post the LBOND ladder and the peg book on the SDEX
+npm run take     # taker buys LBOND with USDC (path payment), then the blocked taker fails
+npm run keeper   # distribute the real Blend interest to receipt holders (capped on-chain)
+npm run bot      # market makers, flow, arbitrageur, pool legs; see scripts/bot/README.md
+npm run bot:demo # the 3-minute scripted run
 
-# Web app. See web/README.md.
-cd web && npm install && npm run dev
+# Web app
+cd web && npm install && npm run dev   # http://localhost:3000
 ```
-
-## Testnet deployment
-
-Addresses are recorded in `deployments/`: `testnet.contract.json` is the active deployment, `testnet.strategies.json` lists every Lotus strategy, `testnet.classic.json` holds the RWA asset, the demo accounts and the offers. Those files are authoritative; the tables below mirror them as of 25 October 2026.
-
-Two Lotus vault instances exist side by side (same wasm). They differ in the DeFindex vault they wrap:
-
-| | v2 `usdc-defindex-blend` (active, live yield) | v1 `usdc-defindex-idle` (kept for comparison) |
-|---|---|---|
-| `lotus_vault` | [`CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG`](https://stellar.expert/explorer/testnet/contract/CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG) | [`CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6`](https://stellar.expert/explorer/testnet/contract/CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6) |
-| Receipt asset (classic, SAC admin = the contract) | `lUSDCb`, issuer `GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO`, SAC `CC6YDSEJRF7QH5JL7MVEYEIU3CTMNEHS4XIK5R36DYA5EVUYIP4PAHPG` | `lUSDC`, issuer `GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6`, SAC `CDQ7HJZGK5RGIHAPWVCE7KVJIDOCQFPJI7CIYLRVNF5RKM62OJXL2HAV` |
-| DeFindex vault | `CDCIDX5FXOENXW4ODR2D7QMRKL4F2NTZYFVZEFF63GTNRVVDXLCQ7EEC` (ours, "Lotus USDC Blend", seeded into the Blend strategy, vault fee 0) | `CBMVK2JK6NTOT2O4HNQAIQFJY232BHKGLIMXDVQVHIIZKDACXDFZDWHN` (PaltaLabs testnet vault, strategy allocation 0: deposits stay idle) |
-| Yield | real Blend supply interest, about 6.9 percent APR observed over a 34 minute window on 25 October 2026 | none |
-
-Shared by both: underlying Blend testnet USDC (`USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56`, SAC `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU`), Blend strategy `CALLOM5I7XLQPPOPQMYAHUWW4N7O3JKT42KQ4ASEEVBXDJQNJOALFSUY`, Blend pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` (TestnetV2). Testnet USDC comes from the Blend testnet faucet (recipe in `deployments/testnet.contract.json`, `notes`).
-
-Why v1 earns nothing: DeFindex invests a deposit in proportion to the vault's existing allocation and skips an asset with nothing invested yet, so a vault that was never seeded stays idle, and only its rebalance manager can seed it. For v2 we created our own DeFindex vault through the testnet factory and seeded it with one `rebalance`; every later deposit is invested in full.
-
-| Demo account | Address |
-|---|---|
-| `rwa_issuer` (LBOND issuer) | `GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF` |
-| `maker` | `GCJUR67CI37SF5QD3AYRVARR3SVFTINQHBSFGICSZEHXDZV2BZEQ46RV` |
-| `taker` | `GAEC3F4ZKGYV4QPTBKN2TTRNQ5SEUAZRNE7AXFQPB4UWMWC4JYW36SI7` |
-| `peg_lp` | `GANIQO23R5TLEYAGHCARVGXSLFI4ET27R4TCIOHC7MDQAWZB3LDRCMBH` |
-| `blocked_taker` | see `deployments/testnet.classic.json` |
-
-If the files and these tables disagree, the files win.
-
-Verification on testnet: v1 smoke test (deposit, redeem, yield simulated by a USDC donation, capped distribution) [`1307e6bf`](https://stellar.expert/explorer/testnet/tx/1307e6bf3456549c07752ecef45baea992c7e1ca185cc2eded98fd79b5a4624f), [`d1ec0985`](https://stellar.expert/explorer/testnet/tx/d1ec09856788d1c97f86c9624f130af0b20c52386cbb021ec73be7f44414f985), [`042c1ca7`](https://stellar.expert/explorer/testnet/tx/042c1ca78d62fba596bfa078fc09fe515e10e662b1cabca12cba5e31f4201131), [`d094e1b6`](https://stellar.expert/explorer/testnet/tx/d094e1b6c5dd289bae259cd5ff1f4b4d205c491876ae73d304e43ea9141a8353) (an over-cap distribution was rejected with `ExceedsCap`). v2 end to end with real interest: deposits of 100, 50 and 100 USDC were fully invested, a `distribute` minted real interest pro rata, and a redeem of 50 `lUSDCb` paid exactly 50 USDC through the Blend withdrawal; transaction hashes are in `deployments/testnet.contract.v2.json`.
-
-## Measured on testnet
-
-- A withdraw from a DeFindex Blend strategy (measured by calling the strategy directly) used about 3.5M CPU instructions of the 400M per-transaction limit and touched 13 ledger entries of the 200 allowed.
-- Through our own vault, Blend-touching calls cost between 0.0015 and 0.14 XLM (deposit of 100 USDC 0.037, redeem 0.0034, distribute to two holders 0.0015). An earlier single measurement of about 100 XLM on a PaltaLabs vault did not reproduce and its cause was not isolated. Mainnet cost has not been measured.
-- Observed yield of v2 over two windows totalling about 34 minutes: gross Blend rate 6.914 percent APR (growth of the pool's `b_rate`), net to Lotus holders 6.85 percent with a 1 percent vault fee and 6.91 percent with the fee at 0. That rate follows Blend's utilization on testnet (88.7 percent during the measurement; at 70 percent the rate model gives about 1.6 percent), so it is an observation, not a forecast. BLND emissions are not included.
 
 ## Limitations
 
-- Redemption at par depends on Blend having liquidity to withdraw. If the pool is fully utilized, redemption waits; the peg book would then trade at a discount until liquidity returns.
-- The `USDC/lUSDC` peg book needs a liquidity provider. In the demo that is us.
-- Distribution is triggered off-chain by a keeper. The cap is enforced on-chain, so the keeper can only delay or omit, never steal. A holder who redeems between distributions forfeits the yield accrued since the last one to the remaining holders, and the mirror image holds: someone who deposits just before a distribution and redeems right after captures a pro-rata share of interest they did not earn. This is a known weakness of distributing by minting to current balances; the roadmap fix is an exchange-rate token (share-price accounting), and until then the keeper should run often.
-- The yield rate is whatever Blend pays at the time, driven by utilization; the figure above is an observation. Mainnet cost and rates are unmeasured.
-- Yield accrues on the quote leg (lUSDC) only. The asset leg earns whatever it earns on its own (for USDY or a Stablebond, that is the issuer's yield).
-- Aquarius already runs concentrated-liquidity pools on Soroban. Lotus does not compete on ranges; it targets the orderbook and the capital that sits in it.
-- On testnet the lUSDC issuer key is kept for recovery. On mainnet it would be locked after `set_admin`, so that the contract is the only possible minter.
+Stated up front, because testnet is not mainnet.
+
+- **JIT yield capture in `distribute`.** Interest is distributed by minting to current balances, so someone who deposits just before a distribution and redeems right after captures a pro-rata share they did not earn, and a holder who redeems earlier forfeits accrued yield to the others. Known weakness of the simple design; the fix is an exchange-rate token (share-price accounting). Until then the keeper should run often. The vault-backed **pool** does not have this problem: it accounts yield in vault shares.
+- **Trust in the LBOND issuer.** LBOND is `AUTH_REVOCABLE` with clawback by design (it models a regulated RWA). The issuer can freeze or revoke a trustline, including the pool's. If the pool's LBOND trustline is revoked, USDC held for Bid positions could not be exchanged for LBOND (the swap fails; the Bid LP's USDC can be stuck until the issuer re-authorizes). A quote-only exit path for Bid LPs is on the roadmap.
+- **Footprint race on the vault-backed pool.** The vault's idle balance can change by a stroop between simulation and inclusion, which fails the transaction with `ExceededLimit`. The app re-simulates and resends once. This was unit-tested but not exercised live.
+- **Keeper and vault liveness.** Distribution needs a keeper; the cap is on-chain so it can only delay or omit. Redemption at par depends on Blend having liquidity; if the pool is fully utilized redemption waits and the peg book trades at a discount.
+- **Junk bins.** Anyone can open tiny positions in many bins to lengthen swaps; mitigated by a minimum size per bin and `max_bins_per_swap`, not eliminated.
+- **No pause, upgrade path or audit.** The pool admin can only change `max_bins_per_swap`. The receipt issuers are not locked on testnet (on mainnet the issuer would be locked after `set_admin`, so the contract is the only minter).
+- **Older instances.** The `idle` and `defindex` pool instances were deployed from an earlier build of the same source (stages A to C); the `twoway` instance runs the final build. Redeploying them from the final source is on the list.
+- **Two-way bid side** was tested in unit tests, not live in the UI.
+- Yield accrues on the USDC leg only. Mainnet cost and rates are unmeasured.
 
 ## Roadmap
 
-- Trustless distribution: per-holder claims from a snapshot or merkle root, or an exchange-rate token, so no keeper is needed.
-- Aggregator integration: Soroswap and LumAgg already route through SDEX, so an `lUSDC` pair is routable today; the work is listing and pricing.
-- More underlyings: EURC, then other quote assets with a lending market.
-- Issuer tooling: ladder builders for primary distribution and buyback programs.
-- Privacy: hidden maker identity through commitments, and later ZK proofs using the BN254 and Poseidon host functions shipped in Protocol 25 (X-Ray).
-- Mainnet, once a production DeFindex USDC vault is available and the contract has been audited.
+- Exchange-rate receipt token: no keeper, no JIT capture.
+- Quote-only exit for Bid LPs, pause and timelock, audit (OpenZeppelin's Stellar library as the base for access control).
+- Aggregator listing: Soroswap and LumAgg already route through the SDEX and Aquarius, so the receipt pair is routable; the work is listing and pricing.
+- More underlyings: EURC, then other quote assets with a lending market. A second yield strategy per pool (the pool design already takes one vault per instance).
+- Privacy: hidden maker identity through commitments, later ZK with the Protocol 25 host functions.
+- Mainnet once a production DeFindex USDC vault exists and the contracts are audited.
 
 ## Team
 
 Alban Derouin, solo builder (product and integration). GitHub: skar8848.
-
-The Lotus idea and brand come from the ETHGlobal New York 2026 team project. Everything in this repository, the contract, the classic-asset setup, the SDEX seeding, the keeper and the app, was built on Stellar during HackMeridian.

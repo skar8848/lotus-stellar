@@ -1,92 +1,79 @@
 # Lotus: demo video script
 
-Target length: 3:00 or less. Screen recording with voice-over. Everything shown is on Stellar testnet.
+Target length: 3:00 or less. Screen recording with voice-over. Everything shown is on Stellar testnet. Say "testnet" at least once, "simulated" for LBOND, and "market makers" for the volume.
 
-Numbers below (amounts, prices) are examples. Use whatever `scripts/` actually seeds and keep the on-screen values consistent with the voice-over.
+Numbers below are examples. Use what the scripts actually seed and keep the on-screen values consistent with the voice-over.
 
 ## Before recording
 
-Accounts and state (names as in `scripts/`, created by `npm run setup`):
+1. Re-seed the books: `cd scripts && node 04-seed-book.mjs --reset`. Then `npm run bot:demo -- --ladder take` is used only for a dry rehearsal; for the recording keep the bot off, or run it in a second terminal for background flow.
+2. Deposit into the active vault (v2, `lUSDCb`) at least 10 minutes before the keeper step, so `surplus()` has visible digits. `node 06-keeper-distribute.mjs --dry-run` shows what a distribution would pay.
+3. App: `cd web && npm run dev`, wallet connected (Freighter, funded testnet account with trustlines to USDC, LBOND, lUSDCb; LBOND authorized by `rwa_issuer`). `taker`, `blocked_taker`, `maker`, `peg_lp` and the bot accounts are in `deployments/`.
+4. One Lotus pool position ready to show: an Ask position on `lbond-usdc-defindex`, so the vault-backed USDC leg is visible.
+5. Tabs in order: the app (`/trade`), `/pools`, `/portfolio`; stellar.expert maker account; Horizon order book for LBOND/lUSDCb (`credit_alphanum12` for both codes); LBOND asset page (flags); `lotus_vault` and pool contract pages.
 
-- `maker`: funded, trustlines to USDC, lUSDC and LBOND; LBOND trustline authorized by `rwa_issuer`.
-- `taker`: funded, trustlines to USDC and LBOND; LBOND trustline authorized. Holds only USDC.
-- `blocked_taker`: funded, trustline to USDC and LBOND, LBOND trustline not authorized. Holds USDC.
-- `peg_lp`: seeds the USDC/lUSDC peg book at 1:1 (`npm run seed`).
-- Keeper account funded. Fees are small: 0.0015 to 0.14 XLM per contract call on testnet, including the calls that touch Blend.
-- Yield to show: the active deployment is Lotus v2 (`lUSDCb`), backed by our own DeFindex vault seeded into Blend, so interest accrues for real. Deposit as early as possible before recording so `surplus()` has visible digits; the dry run `node 06-keeper-distribute.mjs --dry-run` shows what a distribution would pay. `npm run yield` (a USDC transfer to the contract) is only a fallback lever and, if used, must be announced on camera as a top-up.
-
-Browser tabs, in order:
-
-1. The app (`web/`), deposit screen.
-2. stellar.expert, maker account: `https://stellar.expert/explorer/testnet/account/<MAKER_G>`.
-3. Horizon orderbook for LBOND/lUSDC (both codes are 5 characters, so the type is `credit_alphanum12`):
-   `https://horizon-testnet.stellar.org/order_book?selling_asset_type=credit_alphanum12&selling_asset_code=LBOND&selling_asset_issuer=<LBOND_ISSUER_G>&buying_asset_type=credit_alphanum12&buying_asset_code=lUSDC&buying_asset_issuer=<LUSDC_ISSUER_G>`
-4. stellar.expert, LBOND asset page showing the flags: `https://stellar.expert/explorer/testnet/asset/LBOND-<LBOND_ISSUER_G>`.
-5. stellar.expert, `lotus_vault` contract page: `https://stellar.expert/explorer/testnet/contract/<CONTRACT_C>`.
-6. A terminal in `scripts/` with the commands ready: `npm run seed -- --reset` (cancels the maker's and peg provider's existing offers, then posts a fresh ladder and peg book; testnet already holds the offers from the first run), `npm run take` (the taker's path payment, then the blocked taker's attempt, in the same run), `npm run yield` (simulated accrual, required on testnet), `npm run keeper` (distribution).
-
-Have stellar.expert transaction pages ready to open from each script's printed hash.
+Fees are small: 0.0015 to 0.14 XLM per contract call on testnet.
 
 ## Script
 
 ### 0:00 - 0:20. Hook
 
-On screen: title card "Lotus. Yield-bearing liquidity for Stellar's orderbook", then cut to the Horizon orderbook tab showing the LBOND/lUSDC book.
+On screen: title card "Lotus. Directional liquidity and yield-bearing orders for Stellar", then the app's `/trade` page.
 
-Say: "Orderbooks need depth, and depth is capital that earns nothing while it waits. On Stellar, an offer does not move funds out of your account. Lotus uses that: a dollar that earns Blend yield, in a form the orderbook understands. Here is the whole flow on testnet."
+Say: "A resting order is dead capital. Lotus fixes that two ways on Stellar: a directional range pool on Soroban, and a receipt token that lets a limit order on the SDEX keep earning while it waits. Everything here is testnet."
 
-### 0:20 - 0:45. Deposit USDC, receive lUSDC
+### 0:20 - 0:55. The pool
 
-On screen: the app, connected with your own testnet wallet (Freighter). Enter 100 USDC, confirm, wait for the transaction. Then open the transaction on stellar.expert and point at the two effects: USDC leaving your account, lUSDC minted to it. Briefly show the contract page.
+On screen: `/pools`, the Lotus pool tab, the `lbond-usdc-defindex` instance. Show depth by bin. In the range builder choose Ask, a range of five bins around par, 100 LBOND, confirm with the wallet. Show the position appear, then the explorer link.
 
-Say: "I deposit one hundred USDC into the Lotus contract. The contract puts it in a DeFindex vault built to lend on Blend, and mints one hundred lUSDC to me, one to one. lUSDC is a classic Stellar asset; the Soroban contract is the admin of its asset contract and the only minter."
+Say: "This is the Lotus pool. I put one hundred LBOND, a simulated tokenized bond, on five price bins. Directional means inventory only goes down and proceeds only come in: if the price comes back, nothing trades back. The pool can also be two-way, and the USDC side can sit in a DeFindex vault on Blend, recalled just in time by the taker's swap."
 
-### 0:45 - 1:15. Maker posts a ladder on LBOND/lUSDC
+### 0:55 - 1:25. A swap takes it
 
-On screen: terminal, `npm run seed -- --reset`. It posts the USDC/lUSDC peg book (bid 0.9995, ask 1.0005, from `peg_lp`) and the maker's ladder: five asks of 100 LBOND at 0.98, 0.99, 1.00, 1.01 and 1.02 lUSDC, in one transaction. Then the Horizon orderbook tab: refresh, show the five asks. Then the maker's stellar.expert account page: point at the LBOND balance and its selling liabilities.
+On screen: still on `/pools`, the swap panel with the venue comparison against the SDEX. Buy LBOND with 50 USDC. Show the result, the average price and bins crossed. Then `/portfolio`: the position shows proceeds.
 
-Say: "Now I act as an issuer distributing LBOND, a simulated tokenized bond, on a ladder of five asks around par, in one transaction. Look at the account. The LBOND balance has not moved. The offers are recorded as selling liabilities; the funds never left. That is the property Lotus is built on: whatever sits in an offer stays in the account, so if it is lUSDC it keeps earning."
+Say: "A taker buys with USDC. The quote shows the pool next to the SDEX path, and the better venue is marked. My position receives USDC and keeps earning on it."
 
-### 1:15 - 1:45. Taker buys LBOND with USDC via path payment
+### 1:25 - 1:55. The receipt token and the SDEX
 
-On screen: terminal, `npm run take`. The first part runs as `taker`: 150 USDC in, about 152.4 LBOND out, three fills (the peg book, then the 0.98 and 0.99 rungs). Open the transaction on stellar.expert: show the single operation, the path USDC -> lUSDC -> LBOND, and the trade effects. Refresh the Horizon orderbook: the 0.98 ask is gone and the 0.99 ask is partly filled.
+On screen: the vault tab, deposit 100 USDC, receive `lUSDCb`. Then terminal `npm run seed -- --reset` (or already seeded) and the Horizon order book: five LBOND asks quoted in lUSDCb. The maker's stellar.expert page: the LBOND balance has not moved, only selling liabilities.
 
-Say: "A buyer who holds only USDC lifts the first asks. One transaction, one path payment: USDC into lUSDC on the peg book, lUSDC into LBOND on the bond book. The buyer never touches lUSDC, so quoting in lUSDC costs the taker nothing in usability."
+Say: "On the classic side, I deposit USDC and get `lUSDCb`, a Stellar asset the vault contract mints one to one. The vault lends it on Blend through DeFindex. An SDEX offer does not move funds, so the order quoted in this receipt keeps earning. And a taker with only USDC buys LBOND in one path payment through it."
 
-### 1:45 - 2:05. Unauthorized taker fails
+### 1:55 - 2:15. Path payment, and a failure that is on purpose
 
-On screen: the LBOND asset page with `AUTH_REQUIRED`, `AUTH_REVOCABLE` and clawback enabled. Then the terminal: the second part of the same `npm run take` run, the same path payment as `blocked_taker`. Show the failure and the result code `op_not_authorized`.
+On screen: `/trade`, Swap tab, USDC to LBOND, route USDC -> lUSDCb -> LBOND. Then `npm run take` output with the blocked taker failing `op_not_authorized`.
 
-Say: "LBOND is issued with authorization required and clawback enabled. This second buyer is not on the issuer's list. Same transaction, and it fails at the protocol level. No contract code is checking this; the asset itself is compliant."
+Say: "One transaction. The buyer never touches the receipt. And a buyer who is not authorized by the issuer fails at the protocol level, because LBOND is authorization-required with clawback."
 
-### 2:05 - 2:40. Keeper distributes; the maker earns while offers stay open
+### 2:15 - 2:40. Bots keep the price honest
 
-On screen: the maker's stellar.expert page, lUSDC balance before (the lUSDC it received from the fills). Terminal: `npm run keeper` (the interest is real, no top-up needed). Show its output: the surplus read from the contract, each holder's cap and the amount minted, including `peg_lp`, whose lUSDC is committed to its open ask. Refresh the maker's account page: the lUSDC balance has grown; the four remaining LBOND asks are still listed under the account. Refresh the Horizon orderbook: the remaining ladder is unchanged.
+On screen: terminal with `npm run bot:depeg` (or the recorded output): the receipt pushed to 0.985, the arbitrageur restoring it in about ten seconds with the tx links.
 
-Say: "The vault is now worth more than the lUSDC in circulation. The keeper calls distribute with the list of holders. The contract caps every amount on-chain at the holder's share of the surplus, so the keeper can forget someone but can never over-mint or redirect yield. The maker's proceeds earned from the moment of the fill, its remaining asks are still in the book, and the peg provider earned on lUSDC that is sitting in an open offer."
+Say: "Our two market makers and an arbitrageur are three accounts we run, so this volume is market-maker volume, not users. When the receipt drops under par, the arbitrageur buys it and redeems at par on the vault. Ten seconds."
 
-Then add: "The interest is real Blend supply interest on testnet, roughly seven percent a year at the moment; the amount you see is small because we only let it run for a few minutes." Let the deposits sit at least 10 minutes before recording the keeper step so the amounts show digits.
+### 2:40 - 3:00. Yield and close
 
-### 2:40 - 3:00. Close
+On screen: `npm run keeper` output (surplus, holders, amounts minted, including accounts whose receipt sits in open offers), then the README architecture diagram and the repo link.
 
-On screen: the architecture diagram from the README, then the title card with the repository link.
-
-Say: "Lotus is one small Soroban contract, a classic asset with a contract as admin, and Stellar's own orderbook and path payments, composed with DeFindex and Blend. Issuers earn on their proceeds, treasuries earn on their bids, and takers keep paying in USDC. Everything you saw is on testnet and in the repo."
+Say: "The interest is real Blend interest on testnet, around seven percent at the moment, small here because we only let it run for minutes. Two products, one stack: a directional pool, and a receipt that makes the SDEX earn. Testnet only, no audit, limits are in the README."
 
 ## Timing summary
 
 | Segment | Start | Length |
 |---|---|---|
 | Hook | 0:00 | 20 s |
-| Deposit | 0:20 | 25 s |
-| Ladder | 0:45 | 30 s |
-| Path payment | 1:15 | 30 s |
-| Unauthorized taker | 1:45 | 20 s |
-| Distribution | 2:05 | 35 s |
-| Close | 2:40 | 20 s |
+| Pool | 0:20 | 35 s |
+| Swap | 0:55 | 30 s |
+| Receipt and SDEX | 1:25 | 30 s |
+| Path payment and blocked taker | 1:55 | 20 s |
+| Bots, peg | 2:15 | 25 s |
+| Yield and close | 2:40 | 20 s |
 
 ## Recording notes
 
-- Keep every stellar.expert page zoomed so balances and liabilities are readable at 1080p.
-- Pre-run each script once so Horizon has indexed the state; the recording should not wait on confirmations longer than a few seconds. If a Blend-touching transaction is slow, cut and resume on the confirmed page.
-- Do not claim mainnet or audits, and do not quote the yield as a forecast: it is what Blend paid on testnet during our measurement. Say "testnet" at least once and "simulated" for LBOND.
+- Zoom stellar.expert pages so balances and liabilities read at 1080p.
+- Pre-run each action once so Horizon has indexed; cut and resume on the confirmed page if a Blend-touching transaction is slow.
+- The vault-backed pool can fail a transaction with `ExceededLimit` if the vault's idle balance changes between simulation and inclusion; the app re-simulates and resends. If you see it, wait for the retry or send again.
+- A depeg run consumes real resting liquidity, including `peg_lp`'s bid. Re-run `node 04-seed-book.mjs --reset` afterwards.
+- Do not claim mainnet or audits. Do not quote the yield as a forecast. Do not say "users" for bot volume.

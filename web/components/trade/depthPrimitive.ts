@@ -10,7 +10,7 @@ import type {
 } from "lightweight-charts";
 import type { CanvasRenderingTarget2D } from "fancy-canvas";
 
-export type DepthBar = { price: number; depth: number; side?: "bid" | "ask" };
+export type DepthBar = { price: number; depth: number; side?: "bid" | "ask"; size?: number; cum?: number };
 
 // Ported from lotus-main (components/app/depthPrimitive.ts): a liquidity-depth histogram drawn on the
 // candlestick's own canvas, positioned with series.priceToCoordinate() so it shares the price axis.
@@ -18,16 +18,19 @@ export type DepthBar = { price: number; depth: number; side?: "bid" | "ask" };
 const IN_BAND = "rgba(243, 177, 206,0.92)";
 const BID = "rgba(2,199,123,0.45)";
 const ASK = "rgba(235,54,90,0.45)";
+const BID_HOT = "rgba(2,199,123,1)";
+const ASK_HOT = "rgba(235,54,90,1)";
 const NEUTRAL = "rgba(110,140,165,0.28)";
 const PANEL_BG = "#0a0a0a";
 const PANEL_BORDER = "rgba(255,255,255,0.12)";
-export const PANEL_FRAC = 0.2; // depth occupies the right 20% of the pane
+export const PANEL_FRAC = 0; // depth panel hidden on the price chart (the order book shows it); was 0.2
 
 export class DepthPrimitive implements ISeriesPrimitive {
   private series: ISeriesApi<SeriesType> | null = null;
   private requestUpdate?: () => void;
   private depth: DepthBar[] = [];
   private band: { low: number; high: number } | null = null;
+  private hover: number | null = null;
   private readonly view: IPrimitivePaneView;
 
   constructor() {
@@ -46,6 +49,11 @@ export class DepthPrimitive implements ISeriesPrimitive {
   setData(depth: DepthBar[], band: { low: number; high: number } | null) {
     this.depth = depth;
     this.band = band;
+    this.requestUpdate?.();
+  }
+  setHover(price: number | null) {
+    if (price === this.hover) return;
+    this.hover = price;
     this.requestUpdate?.();
   }
   paneViews(): readonly IPrimitivePaneView[] {
@@ -78,8 +86,9 @@ export class DepthPrimitive implements ISeriesPrimitive {
         const w = minW + Math.sqrt(Math.max(0, Math.min(1, d.depth))) * span;
         const y = yMedia * vpr - barH / 2;
         const inBand = this.band !== null && d.price >= this.band.low && d.price <= this.band.high;
-        ctx.fillStyle = inBand ? IN_BAND : d.side === "bid" ? BID : d.side === "ask" ? ASK : NEUTRAL;
-        ctx.fillRect(W - w, y, w, barH);
+        const hot = this.hover !== null && d.price === this.hover;
+        ctx.fillStyle = hot ? (d.side === "bid" ? BID_HOT : d.side === "ask" ? ASK_HOT : IN_BAND) : inBand ? IN_BAND : d.side === "bid" ? BID : d.side === "ask" ? ASK : NEUTRAL;
+        ctx.fillRect(W - w, hot ? y - vpr : y, w, hot ? barH + 2 * vpr : barH);
       }
     });
   }

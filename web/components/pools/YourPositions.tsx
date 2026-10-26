@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ExplorerLink, Spinner, TxStatus } from "@/components/common";
+import { explorerContract, explorerOffer, explorerTx } from "@/lib/explorer";
+import { positionCreationTx } from "@/lib/positionTx";
 import { loadPoolPositions } from "@/components/portfolio/data";
 import { useAccount } from "@/lib/account";
 import { useConfig, useNet } from "@/lib/config-context";
@@ -22,7 +24,7 @@ import { fmtAmt } from "@/lib/vault";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { FillBar, PairGlyph, StatusBadge, type PositionStatus } from "./bits";
-import { STRATEGY_LABEL, offerRows, poolRows, type OfferRow, type PoolRow, type PositionRow } from "./positionsModel";
+import { EARLY_REDEMPTION_LABEL, STRATEGY_LABEL, offerRows, poolPositionLocked, poolRows, type OfferRow, type PoolRow, type PositionRow } from "./positionsModel";
 
 type Filter = "all" | PositionRow["strategy"];
 
@@ -86,6 +88,8 @@ export function YourPositions({ version, aprText, onNew }: { version: number; ap
       return { hash: res.hash, result: res.result, note: `${STRATEGY_LABEL[r.strategy]} #${r.position.id} ${kind === "claim" ? "claimed" : "removed"}${paid ? `: paid ${paid}` : ""}` };
     });
 
+  // kept for "Early redemption" (the UI is gated: a listed ladder is locked until fully filled)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const cancel = (r: OfferRow) =>
     run(`cancel:${r.key}`, async (onStage) => {
       if (!address) throw new Error("Connect a wallet first");
@@ -174,7 +178,7 @@ export function YourPositions({ version, aprText, onNew }: { version: number; ap
                   {r.kind === "pool" ? (
                     <PoolTableRow r={r} aprText={aprText} open={open === r.key} onToggle={() => setOpen(open === r.key ? null : r.key)} busy={busy} running={tx.running} onAct={poolAct} />
                   ) : (
-                    <OfferTableRow r={r} aprText={aprText} open={open === r.key} onToggle={() => setOpen(open === r.key ? null : r.key)} busy={busy} running={tx.running} onCancel={cancel} />
+                    <OfferTableRow r={r} aprText={aprText} open={open === r.key} onToggle={() => setOpen(open === r.key ? null : r.key)} network={config.network} />
                   )}
                   {open === r.key ? (
                     <TableRow className="hover:bg-transparent">
@@ -299,10 +303,15 @@ function PoolTableRow({
             {busy === `claim:${r.key}` ? <Spinner /> : null}
             Claim
           </Button>
-          <Button size="xs" variant="outline" disabled={running} onClick={() => onAct("remove", r)} data-testid={`remove-${inst.id}-${p.id}`}>
-            {busy === `remove:${r.key}` ? <Spinner /> : null}
-            Remove
-          </Button>
+          {poolPositionLocked(p) ? (
+            <EarlyRedemption testId={`early-${inst.id}-${p.id}`} />
+          ) : (
+            <Button size="xs" variant="outline" disabled={running} onClick={() => onAct("remove", r)} data-testid={`remove-${inst.id}-${p.id}`}>
+              {busy === `remove:${r.key}` ? <Spinner /> : null}
+              Remove
+            </Button>
+          )}
+          <ViewPoolPosition contract={inst.contract} owner={p.owner} id={p.id} testId={`view-${inst.id}-${p.id}`} />
         </div>
       </TableCell>
     </TableRow>
@@ -314,17 +323,13 @@ function OfferTableRow({
   aprText,
   open,
   onToggle,
-  busy,
-  running,
-  onCancel,
+  network,
 }: {
   r: OfferRow;
+  network: string;
   aprText: string | null;
   open: boolean;
   onToggle: () => void;
-  busy: string | null;
-  running: boolean;
-  onCancel: (r: OfferRow) => void;
 }) {
   const live = r.receiptOf?.status === "live";
   return (
@@ -349,10 +354,21 @@ function OfferTableRow({
         <YieldCell on={r.strategy === "sdex-yield" && live} aprText={aprText} />
       </TableCell>
       <TableCell className="whitespace-nowrap pr-5 text-right">
-        <Button size="xs" variant="outline" disabled={running} onClick={() => onCancel(r)} data-testid={`cancel-${r.side}-${r.quote.code}`}>
-          {busy === `cancel:${r.key}` ? <Spinner /> : null}
-          Cancel{r.offers.length > 1 ? ` all ${r.offers.length}` : ""}
-        </Button>
+        {/* a listed ladder is never fully filled (filled offers leave the book): locked, see poolPositionLocked */}
+        <div className="flex justify-end gap-1.5">
+          <EarlyRedemption testId={`early-${r.side}-${r.quote.code}`} />
+          {r.offers.length === 1 ? (
+            <Button size="xs" variant="ghost" asChild>
+              <a href={explorerOffer(r.offers[0].id, network)} target="_blank" rel="noreferrer" data-testid={`view-${r.side}-${r.quote.code}`}>
+                View offer
+              </a>
+            </Button>
+          ) : (
+            <Button size="xs" variant="ghost" onClick={onToggle} data-testid={`view-${r.side}-${r.quote.code}`} title="One link per offer below">
+              View {r.offers.length} offers
+            </Button>
+          )}
+        </div>
       </TableCell>
     </TableRow>
   );
@@ -395,6 +411,39 @@ function RowDetails({ r, network }: { r: PositionRow; network: string }) {
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * "View position": the stellar.expert page of the add_position transaction (found from the pool's position_added
+ * event, lib/positionTx.ts, cached), or the pool contract page while it resolves / when outside RPC retention.
+ */
+function ViewPoolPosition({ contract, owner, id, testId }: { contract: string; owner: string; id: bigint; testId: string }) {
+  const net = useNet();
+  const config = useConfig();
+  const [hash, setHash] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    positionCreationTx(net, contract, owner, id).then((h) => alive && setHash(h));
+    return () => {
+      alive = false;
+    };
+  }, [net, contract, owner, id]);
+  const href = hash ? explorerTx(hash, config.network) : explorerContract(contract, config.network);
+  return (
+    <Button size="xs" variant="ghost" asChild>
+      <a href={href} target="_blank" rel="noreferrer" data-testid={testId} data-resolved={hash ? "tx" : "contract"} title={hash ? "Transaction that created this position" : "Pool contract (creation tx not found in RPC retention)"}>
+        View position
+      </a>
+    </Button>
+  );
+}
+
+function EarlyRedemption({ testId }: { testId: string }) {
+  return (
+    <Button size="xs" variant="outline" disabled title="Locked until the order is fully filled. Early redemption is coming soon." data-testid={testId}>
+      {EARLY_REDEMPTION_LABEL}
+    </Button>
   );
 }
 

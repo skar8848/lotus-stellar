@@ -94,11 +94,18 @@ const TOKEN_STYLE: Record<string, { bg: string; fg: string }> = {
   XLM: { bg: "#e8eef4", fg: "#06141c" },
 };
 
-/** Token logo with a coloured-initial fallback (USDC has an image, as in the previous front). */
+const TOKEN_IMG: Record<string, string> = {
+  USDC: "/tokens/usdc.png",
+  lUSDC: "/tokens/lusdc.svg",
+  lUSDCb: "/tokens/lusdcb.svg",
+};
+
+/** Token logo with a coloured-initial fallback (USDC and the Lotus receipts have images). */
 export function TokenIcon({ code, size = 20, className }: { code: string; size?: number; className?: string }) {
-  if (code === "USDC") {
+  const src = TOKEN_IMG[code];
+  if (src) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src="/tokens/usdc.png" alt="USDC" width={size} height={size} className={cn("shrink-0 rounded-full", className)} style={{ width: size, height: size }} />;
+    return <img src={src} alt={code} width={size} height={size} className={cn("shrink-0 rounded-full", className)} style={{ width: size, height: size }} />;
   }
   const st = TOKEN_STYLE[code] ?? { bg: "#2a2f36", fg: "#e8eef4" };
   return (

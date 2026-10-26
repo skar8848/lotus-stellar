@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Droplets } from "lucide-react";
 import { ConnectButton } from "@/components/wallet/ConnectButton";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,6 @@ const LINKS = [
   { href: "/trade", label: "Trade" },
   { href: "/pools", label: "Pools" },
   { href: "/portfolio", label: "Portfolio" },
-  { href: "/faucet", label: "Faucet" },
 ];
 
 export function NetworkBadge({ className }: { className?: string }) {
@@ -27,7 +27,9 @@ export function Nav() {
   const active = (href: string) => pathname === href || pathname.startsWith(href + "/");
   return (
     <header className="sticky top-0 z-50 border-b border-line bg-bg/70 backdrop-blur-md">
-      <nav className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      {/* one container on every page: full width, 16px gutter (the /trade terminal is full width too, so the logo
+          lines up with the market selector there and sits at the same x on every route) */}
+      <nav className="flex w-full items-center justify-between gap-3 px-4 py-3" data-testid="nav">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-2.5 text-lg font-bold tracking-tight">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -46,13 +48,25 @@ export function Nav() {
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
+          <Link
+            href="/faucet"
+            data-testid="nav-faucet"
+            title="Testnet faucet: XLM, trustlines, LBOND + USDC"
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs font-medium transition",
+              active("/faucet") ? "border-primary/50 bg-primary/10 text-primary" : "border-border text-mutedfg hover:border-primary/40 hover:text-primary",
+            )}
+          >
+            <Droplets className="size-3.5" aria-hidden />
+            Faucet
+          </Link>
           <NetworkBadge className="hidden sm:inline-flex" />
           <ConnectButton />
         </div>
       </nav>
       {/* phone: the destinations as a second row */}
-      <div className="mx-auto grid max-w-7xl grid-cols-4 gap-1 px-4 pb-2 md:hidden">
+      <div className="grid w-full grid-cols-3 gap-1 px-4 pb-2 md:hidden">
         {LINKS.map((l) => (
           <Link
             key={l.href}

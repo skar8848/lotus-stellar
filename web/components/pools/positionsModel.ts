@@ -12,6 +12,14 @@ import { priceAt, type Side } from "@/lib/poolGrid";
 import { assetReady, sameAsset, toAssetRef, type AssetRef, type HorizonOffer } from "@/lib/stellar";
 import type { StrategyId } from "./useOrder";
 
+/**
+ * Product rule: a directional limit order is locked until it is fully filled (no Remove / Cancel, only Claim of the
+ * proceeds; "Early redemption" comes later). A two-way LP position never "fills" and keeps Remove.
+ * SDEX ladders: a fully filled offer disappears from the book, so a listed ladder is always locked.
+ */
+export const poolPositionLocked = (p: Pick<Position, "mode" | "inventory">): boolean => p.mode !== "TwoWay" && p.inventory > 0n;
+export const EARLY_REDEMPTION_LABEL = "Early redemption · soon";
+
 export type PoolRow = {
   kind: "pool";
   key: string;

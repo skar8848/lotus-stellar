@@ -10,7 +10,7 @@ import type { Side } from "@/lib/poolGrid";
 import { cn } from "@/lib/utils";
 import { RoundCheck } from "./bits";
 import type { LiveApr } from "./useBlendApr";
-import type { Destination, StrategyId } from "./useOrder";
+import { crossText, type Destination, type StrategyId } from "./useOrder";
 
 const TITLE: Record<StrategyId, string> = {
   pool: "Lotus pool",
@@ -44,10 +44,9 @@ export function StrategyCards({
   receipt,
   bins,
   apr,
-  refPrice,
-  refSource,
   selected,
   onSelect,
+  onChangeRange,
 }: {
   destinations: Destination[];
   side: Side;
@@ -56,10 +55,10 @@ export function StrategyCards({
   receipt: AssetRef;
   bins: number;
   apr: LiveApr;
-  refPrice: number;
-  refSource: string;
   selected: StrategyId | null;
   onSelect: (id: StrategyId) => void;
+  /** curator rule: move the range to the highest top allowed for Lotus pool + Blend yield */
+  onChangeRange?: () => void;
 }) {
   return (
     <div className="grid gap-3 md:grid-cols-2" data-testid="strategy-cards">
@@ -68,19 +67,27 @@ export function StrategyCards({
         const active = selected === d.id && !disabled;
         const yieldLive = d.yieldOn && d.strategy?.status === "live";
         return (
-          <button
+          // a div with the button role while selectable; a disabled card is plain content, so the curator note can
+          // hold its own "Change range" button (a button inside a disabled button would be disabled too)
+          <div
             key={d.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(d.id)}
+            role={disabled ? undefined : "button"}
+            tabIndex={disabled ? undefined : 0}
+            onClick={() => !disabled && onSelect(d.id)}
+            onKeyDown={(e) => {
+              if (!disabled && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                onSelect(d.id);
+              }
+            }}
             data-testid={`strategy-${d.id}`}
             data-disabled={disabled ? "1" : "0"}
             data-selected={active ? "1" : "0"}
             data-signatures={d.signatures}
             className={cn(
-              "flex flex-col gap-3 rounded-xl border p-4 text-left transition",
+              "flex cursor-pointer flex-col gap-3 rounded-xl border p-4 text-left transition",
               active ? "border-primary/60 bg-primary/10" : "border-line hover:border-white/20",
-              disabled && "cursor-not-allowed opacity-55 hover:border-line",
+              disabled && "cursor-not-allowed hover:border-line [&>*:not([data-keep])]:opacity-55",
             )}
           >
             <div className="flex items-start justify-between gap-2">
@@ -130,16 +137,39 @@ export function StrategyCards({
             </div>
 
             {disabled ? (
-              <p className="rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 text-[11px] leading-relaxed text-primary" data-testid={`strategy-${d.id}-why`}>
-                {d.unavailable}
-                {d.id === "pool-yield" && d.guard.blocked
-                  ? ` The top of your range is ${fmt(Math.max(0, d.guard.distance ?? 0), 1)} bins under the price (${fmt(refPrice, 4, 4)}, ${refSource}); the curator rule needs at least ${PROXIMITY_MIN_BINS} bins (about 1%) for a bid to earn in the pool. Move the range down, or use the Stellar DEX + Blend yield, where the receipt keeps earning in the offer.`
-                  : ""}
+              <div
+                data-keep=""
+                className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 text-[11px] leading-relaxed text-primary"
+                data-testid={`strategy-${d.id}-why`}
+                title={
+                  d.id === "pool-yield" && d.guard.blocked
+                    ? `Top of the range ${fmt(Math.max(0, d.guard.distance ?? 0), 1)} bins under ${fmt(d.ref.price, 4, 4)} (${d.ref.source}); the curator rule needs ${PROXIMITY_MIN_BINS}.`
+                    : undefined
+                }
+              >
+                <span>{d.unavailable}</span>
+                {d.id === "pool-yield" && d.guard.blocked && onChangeRange ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onChangeRange();
+                    }}
+                    className="shrink-0 rounded-md border border-primary/50 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/10"
+                    data-testid="strategy-change-range"
+                  >
+                    Change range
+                  </button>
+                ) : null}
+              </div>
+            ) : d.crossing > 0 ? (
+              <p className="rounded-lg border border-red/40 bg-red/5 px-2.5 py-2 text-[11px] leading-relaxed text-red" data-testid={`strategy-${d.id}-crosses`}>
+                {crossText(d, side, base.code, quote.code, receipt.code, bins)}
               </p>
             ) : d.id === "pool-yield" && side === "Ask" ? (
               <p className="text-[10px] text-mutedfg">Asks are never blocked: the yield is on proceeds waiting in the vault.</p>
             ) : null}
-          </button>
+          </div>
         );
       })}
     </div>

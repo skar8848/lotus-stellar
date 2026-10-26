@@ -21,6 +21,7 @@ export function LiquidityRangeChart({
   depth,
   stepBps,
   height = 320,
+  unit,
 }: {
   /** price series, oldest first (SDEX closes). Empty: a flat line at the current price */
   line: number[];
@@ -31,11 +32,15 @@ export function LiquidityRangeChart({
   depth: DepthBin[];
   stepBps: number;
   height?: number;
+  /** size unit of the depth bars (BASE code) for the hover tooltip */
+  unit?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<null | "min" | "max">(null);
+  // hover: crosshair + price at the cursor; over the depth panel, the nearest bin's price and size
+  const [hover, setHover] = useState<null | { x: number; y: number; w: number; price: number }>(null);
 
-  const { lo, hi, linePath, bars } = useMemo(() => {
+  const { lo, hi, linePath, bars, visible } = useMemo(() => {
     const series = line.length > 1 ? line : current > 0 ? [current, current] : [];
     // depth far from the action would flatten everything: only bins within 10% of the price drive the scale
     const near = depth.filter((d) => current <= 0 || Math.abs(d.price / current - 1) < 0.1);
@@ -64,7 +69,7 @@ export function LiquidityRangeChart({
       const withMine = w(d.pool + d.sdex + (d.mine ?? 0));
       return { y: yOf(d.price), h: barH, pool, sdex: total - pool, mine: d.mine ? Math.max(3, withMine - total) : 0, base: total, inRange: d.price >= min && d.price <= max };
     });
-    return { lo, hi, linePath, bars };
+    return { lo, hi, linePath, bars, visible };
   }, [line, depth, min, max, current, stepBps]);
 
   const yToPrice = useCallback(
@@ -80,6 +85,11 @@ export function LiquidityRangeChart({
 
   const onMove = useCallback(
     (e: React.PointerEvent) => {
+      const el = ref.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setHover({ x: e.clientX - r.left, y: e.clientY - r.top, w: r.width, price: yToPrice(e.clientY) });
+      }
       if (!drag) return;
       const p = yToPrice(e.clientY);
       const gap = ((current || 1) * stepBps) / 10_000;
@@ -99,7 +109,10 @@ export function LiquidityRangeChart({
       style={{ height }}
       onPointerMove={onMove}
       onPointerUp={() => setDrag(null)}
-      onPointerLeave={() => setDrag(null)}
+      onPointerLeave={() => {
+        setDrag(null);
+        setHover(null);
+      }}
     >
       <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
         <defs>
@@ -161,6 +174,36 @@ export function LiquidityRangeChart({
           </div>
         );
       })}
+
+      {/* hover crosshair + price label; depth tooltip when over the depth panel (right 20%) */}
+      {hover && !drag ? (
+        <>
+          <div className="pointer-events-none absolute left-0 right-0 border-t border-white/30" style={{ top: hover.y }} data-testid="range-crosshair">
+            <span className="absolute right-1 -translate-y-1/2 rounded bg-white px-1 py-px text-[10px] font-medium tabular-nums text-black">{fmtP(hover.price)}</span>
+          </div>
+          <div className="pointer-events-none absolute bottom-0 top-0 border-l border-white/20" style={{ left: hover.x }} />
+          {(() => {
+            if (hover.x < hover.w * 0.8 || visible.length === 0) return null;
+            const d = visible.reduce((b, x) => (Math.abs(x.price - hover.price) < Math.abs(b.price - hover.price) ? x : b));
+            // only when the cursor is within one bin of a bar
+            if (Math.abs(d.price / hover.price - 1) > stepBps / 10_000) return null;
+            return (
+              <div
+                className="pointer-events-none absolute z-10 -translate-x-full -translate-y-1/2 whitespace-nowrap rounded-md border border-line bg-card px-2 py-1 text-[10px] tabular-nums shadow"
+                style={{ left: Math.max(130, hover.x - 8), top: Math.min(Math.max(hover.y, 22), height - 22) }}
+                data-testid="depth-tooltip"
+              >
+                <div className="font-medium">{fmtP(d.price)}</div>
+                <div className="text-mutedfg">
+                  pool {d.pool.toFixed(2)} · SDEX {d.sdex.toFixed(2)}
+                  {d.mine ? ` · yours ${d.mine.toFixed(2)}` : ""}
+                  {unit ? ` ${unit}` : ""}
+                </div>
+              </div>
+            );
+          })()}
+        </>
+      ) : null}
 
       {/* current price marker */}
       {current > 0 ? (

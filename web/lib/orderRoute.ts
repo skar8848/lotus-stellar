@@ -21,7 +21,7 @@
 // the protocol rounds the counter amount of each trade in favour of the offer owner (stellar-core rules).
 
 import { SCALE, divRound, fromStroops, gcd } from "./amount.ts";
-import { priceAt, type PositionPlan, type Side } from "./poolGrid.ts";
+import { MAX_BIN, MIN_BIN, priceAt, type PositionPlan, type Side } from "./poolGrid.ts";
 
 export type Venue = "pool" | "sdex";
 
@@ -89,8 +89,7 @@ export function binsBelowReference(hiBin: number, stepBps: number, refPrice: num
 
 export type YieldGuard = { blocked: boolean; reason: string | null; distance: number | null };
 
-export const PROXIMITY_REASON =
-  "Too close to the price: your USDC would be recalled from the vault by every trade, little yield, more failures.";
+export const PROXIMITY_REASON = "Too close to the price";
 
 /** Proximity rule: only Bid + Pool can be blocked; Ask and SDEX are never blocked. */
 export function yieldGuard(i: { side: Side; venue: Venue; hiBin: number; stepBps: number; refPrice: number }): YieldGuard {
@@ -102,19 +101,140 @@ export function yieldGuard(i: { side: Side; venue: Venue; hiBin: number; stepBps
   return { blocked, reason: blocked ? PROXIMITY_REASON : null, distance };
 }
 
+/**
+ * Highest top bin a Bid can use and still pass the curator rule for this reference (reference bin minus
+ * PROXIMITY_MIN_BINS, on the exact yieldGuard test). Used by "Change range".
+ */
+export function maxYieldBidHiBin(stepBps: number, refPrice: number): number {
+  if (!(refPrice > 0)) return MAX_BIN;
+  let b = Math.min(MAX_BIN, Math.floor(Math.log(refPrice) / Math.log(1 + stepBps / 10_000)) - PROXIMITY_MIN_BINS + 2);
+  while (b > MIN_BIN && yieldGuard({ side: "Bid", venue: "pool", hiBin: b, stepBps, refPrice }).blocked) b--;
+  return b;
+}
+
+/** Move a Bid range down so its top is maxYieldBidHiBin, keeping the width when the grid allows it. */
+export function rangeForYield(loBin: number, hiBin: number, stepBps: number, refPrice: number): { loBin: number; hiBin: number } {
+  const top = Math.min(hiBin, maxYieldBidHiBin(stepBps, refPrice));
+  const width = Math.max(0, hiBin - loBin);
+  return { loBin: Math.max(MIN_BIN, top - width), hiBin: top };
+}
+
+// ---- direction rule ---------------------------------------------------------------------------------------------
+// A directional order never starts on the wrong side of the price of the venue it waits on: a SELL (Ask) range is
+// entirely at or above the reference, a BUY (Bid) range entirely at or below it (else it is a market order).
+
+/** Allowed bins for a side at a reference: Ask from the first bin priced >= ref, Bid up to the last bin priced <= ref. */
+export function directionBounds(side: Side, stepBps: number, refPrice: number): { minBin: number; maxBin: number } {
+  if (!(refPrice > 0)) return { minBin: MIN_BIN, maxBin: MAX_BIN };
+  const ref = BigInt(Math.round(refPrice * Number(SCALE)));
+  let b = Math.max(MIN_BIN, Math.min(MAX_BIN, Math.round(Math.log(refPrice) / Math.log(1 + stepBps / 10_000))));
+  if (side === "Ask") {
+    while (b > MIN_BIN && priceAt(b - 1, stepBps) >= ref) b--;
+    while (b < MAX_BIN && priceAt(b, stepBps) < ref) b++;
+    return { minBin: b, maxBin: MAX_BIN };
+  }
+  while (b < MAX_BIN && priceAt(b + 1, stepBps) <= ref) b++;
+  while (b > MIN_BIN && priceAt(b, stepBps) > ref) b--;
+  return { minBin: MIN_BIN, maxBin: b };
+}
+
+/** null when the range respects the direction rule, else a short message. */
+export function directionError(side: Side, loBin: number, hiBin: number, stepBps: number, refPrice: number): string | null {
+  const { minBin, maxBin } = directionBounds(side, stepBps, refPrice);
+  if (side === "Ask" && loBin < minBin) return "A sell range must be at or above the current price";
+  if (side === "Bid" && hiBin > maxBin) return "A buy range must be at or below the current price";
+  return null;
+}
+
 /** Number of wallet signatures the destination needs (shown before signing). */
 export function signaturesNeeded(i: { side: Side; venue: Venue; yieldOn: boolean; needsReceiptTrustline?: boolean }): number {
   if (i.venue === "sdex" && i.yieldOn && i.side === "Bid") return i.needsReceiptTrustline ? 3 : 2;
   return 1;
 }
 
-/** Reference price: SDEX receipt book mid, else SDEX USDC book mid, else the pool's own mid, else 1.0. */
+/**
+ * Legacy single reference (two-way builder only): SDEX receipt book mid, else SDEX USDC book mid, else the pool's
+ * own mid, else 1.0. The New position flow uses referenceFor (per strategy) below.
+ */
 export function pickReference(cands: { receiptMid: number | null; usdcMid: number | null; poolMid: number | null }): { price: number; source: string } {
   const ok = (v: number | null): v is number => v !== null && Number.isFinite(v) && v > 0;
   if (ok(cands.receiptMid)) return { price: cands.receiptMid, source: "SDEX receipt book" };
   if (ok(cands.usdcMid)) return { price: cands.usdcMid, source: "SDEX USDC book" };
   if (ok(cands.poolMid)) return { price: cands.poolMid, source: "Lotus pool" };
   return { price: 1, source: "default 1.0" };
+}
+
+// ---- per-strategy reference price and crossing --------------------------------------------------------------------
+// Each strategy waits against a different book, so its reference price (range presets, curator rule) and its
+// "crosses the book" check must read THAT book, not the receipt book for every strategy:
+//   pool        : the instance's own bins, then BASE/USDC (a pool ask under the USDC bids is arbitraged at once)
+//   sdex        : BASE/USDC (the offers are posted on that book)
+//   sdex + yield: BASE/receipt
+// The fallbacks only feed the reference price when the target book is empty (nothing to cross there then).
+
+/** Best bid / best ask of one book (QUOTE per BASE, decimal), null when that side is empty. */
+export type BookTop = { bid: number | null; ask: number | null };
+export type MarketTops = { usdc: BookTop; receipt: BookTop; pool: BookTop };
+export type BookKey = keyof MarketTops;
+
+const BOOK_SOURCE: Record<BookKey, string> = { pool: "Lotus pool bins", usdc: "SDEX USDC book", receipt: "SDEX receipt book" };
+
+const okPrice = (v: number | null | undefined): v is number => v !== null && v !== undefined && Number.isFinite(v) && v > 0;
+
+/** Mid of a book top, or the one side that exists, or null. */
+export function topMid(t: BookTop): number | null {
+  const b = okPrice(t.bid) ? t.bid : null;
+  const a = okPrice(t.ask) ? t.ask : null;
+  return b !== null && a !== null ? (a + b) / 2 : (b ?? a);
+}
+
+/** Books the order rests against / can be crossed on (first = the venue itself). */
+export function targetBooks(venue: Venue, yieldOn: boolean): BookKey[] {
+  if (venue === "pool") return ["pool", "usdc"];
+  return yieldOn ? ["receipt"] : ["usdc"];
+}
+
+/** Reference price order: the target books first, then the others as a fallback. */
+export function referenceOrder(venue: Venue, yieldOn: boolean): BookKey[] {
+  if (venue === "pool") return ["pool", "usdc", "receipt"];
+  return yieldOn ? ["receipt", "usdc", "pool"] : ["usdc", "pool", "receipt"];
+}
+
+/** Reference price of one strategy: mid of its first non-empty book in referenceOrder, else 1.0. */
+export function referenceFor(venue: Venue, yieldOn: boolean, m: MarketTops): { price: number; source: string } {
+  for (const k of referenceOrder(venue, yieldOn)) {
+    const mid = topMid(m[k]);
+    if (mid !== null) return { price: mid, source: BOOK_SOURCE[k] };
+  }
+  return { price: 1, source: "default 1.0" };
+}
+
+/**
+ * Range-step reference before a strategy is chosen: the most conservative of the per-strategy references, so a
+ * preset placed from it crosses no venue (Ask: the highest reference, Bid: the lowest).
+ */
+export function conservativeReference(side: Side, refs: { price: number; source: string }[]): { price: number; source: string } {
+  const real = refs.filter((r) => okPrice(r.price) && r.source !== "default 1.0");
+  if (real.length === 0) return refs[0] ?? { price: 1, source: "default 1.0" };
+  return real.reduce((best, r) => (side === "Ask" ? (r.price > best.price ? r : best) : r.price < best.price ? r : best));
+}
+
+/**
+ * Number of order levels (grid prices, QUOTE per BASE) that cross the strategy's target books: an ask at or under
+ * the best bid, a bid at or above the best ask, of any target book.
+ */
+export function crossingLevels(side: Side, prices: number[], venue: Venue, yieldOn: boolean, m: MarketTops): number {
+  const books = targetBooks(venue, yieldOn).map((k) => m[k]);
+  if (side === "Ask") {
+    const bids = books.map((b) => b.bid).filter(okPrice);
+    if (bids.length === 0) return 0;
+    const best = Math.max(...bids);
+    return prices.filter((p) => p <= best).length;
+  }
+  const asks = books.map((b) => b.ask).filter(okPrice);
+  if (asks.length === 0) return 0;
+  const best = Math.min(...asks);
+  return prices.filter((p) => p >= best).length;
 }
 
 export type SummaryInput = {

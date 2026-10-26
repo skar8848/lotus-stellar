@@ -39,8 +39,12 @@ const browser = await launch();
   await ctx.close();
 }
 
-// 2) simulated pool: seed two positions for the maker in the mock's localStorage, then Claim and Remove through the UI
-{
+// 2) simulated pool: seed two positions for the maker in the mock's localStorage, then Claim and Remove through the UI.
+//    Only when the deployment runs the local simulation (no testnet.pool.json): with live pools it is skipped.
+const cfg = await (await fetch(`${BASE_URL}/api/config`)).json();
+const simulated = (cfg.pools ?? []).some((p) => p.mock);
+if (!simulated) console.log("SKIP  simulation checks: the pools are live (deployments/testnet.pool.json), no mock instance");
+else {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
   const sent = [];

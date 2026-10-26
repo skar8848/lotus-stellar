@@ -125,7 +125,16 @@ export function PortfolioClient() {
 
           <ReceiptPositions strategies={config.strategies} account={acct.data} supplies={supplies.data} network={config.network} loading={accountLoading} onChanged={refreshAll} />
 
-          <div data-testid="portfolio-offers" className="[&_div:has(>button[data-value=market])]:hidden">
+          {/* same rule as /pools Your positions: a resting limit order is locked until fully filled (filled offers
+              leave the book), so the shared OpenOffers table is shown without its Cancel buttons here */}
+          <div
+            data-testid="portfolio-offers"
+            data-locked="1"
+            className="[&_[data-testid=offer-cancel]]:hidden [&_[data-testid=offers-cancel-all]]:hidden [&_div:has(>button[data-value=market])]:hidden"
+          >
+            <p className="mb-2 text-[11px] text-mutedfg" data-testid="portfolio-offers-locked">
+              Offers are locked until fully filled · Early redemption · soon
+            </p>
             <OpenOffers markets={markets} market={null} offers={offers} onChanged={refreshAll} />
           </div>
 

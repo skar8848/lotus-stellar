@@ -119,7 +119,7 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
     });
   }, [market, config.rwa]);
 
-  // Buy the base with: the quote on the peg book (USDC/receipt), plain USDC otherwise (routed through the receipt
+  // Buy the base with: the quote on the peg book (receipt/USDC), plain USDC otherwise (routed through the receipt
   // book when needed). Sell the base for the same asset.
   const counter = market.kind === "peg" ? market.quote : market.underlying;
   const [pay, setPay] = useState<AssetRef>(market.underlying);

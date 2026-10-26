@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AssetLink, Empty, ExplorerLink } from "@/components/common";
 import { useAccount } from "@/lib/account";
-import { bestPrices, depthBars, midPrice } from "@/lib/book";
+import { bestPrices, midPrice } from "@/lib/book";
 import { useConfig } from "@/lib/config-context";
 import { usePolling } from "@/lib/hooks";
 import { buildMarkets, pickMarket } from "@/lib/markets";
@@ -22,7 +22,6 @@ import type { PricePick } from "./LimitTab";
 import { MarketBar, dayStats } from "./MarketBar";
 import { OrderPanel, type OrderTab } from "./OrderPanel";
 import { PriceChart } from "./PriceChart";
-import { computeRange, effective, initialRangeForm, type RangeForm } from "./rangeState";
 
 const TFS = [
   { label: "1m", ms: 60_000 },
@@ -87,7 +86,7 @@ export function TradeClient() {
   const wallet = useWallet();
   const acct = useAccount();
 
-  const markets = useMemo(() => buildMarkets(config), [config]);
+  const markets = useMemo(() => buildMarkets(config, { activeOnly: true }), [config]);
   const market = pickMarket(markets, params.get("market"));
 
   const [tab, setTab] = useState<OrderTab>("swap");
@@ -96,7 +95,6 @@ export function TradeClient() {
   const [midTab, setMidTab] = useState<"book" | "trades">("book");
   const [slippage, setSlippage] = useState(0.5);
   const [pick, setPick] = useState<PricePick>(null);
-  const [form, setForm] = useState<RangeForm>(initialRangeForm);
 
   const desktop = useIsDesktop();
   const mainRef = useRef<HTMLElement>(null);
@@ -127,12 +125,6 @@ export function TradeClient() {
   const refPrice = mid ?? last ?? 1;
   const day = useMemo(() => dayStats(dayCandles.data, last), [dayCandles.data, last]);
 
-  const rangeResult = useMemo(() => computeRange(form, refPrice), [form, refPrice]);
-  const eff = effective(form, refPrice);
-  const rangeLine = tab === "range" && Number(eff.from) > 0 && Number(eff.to) > 0 ? { start: Number(eff.from), end: Number(eff.to) } : null;
-  const bins = tab === "range" ? rangeResult.levels.map((l) => Number(l.price)) : [];
-
-  const depth = useMemo(() => depthBars(bk), [bk]);
   // line fallback: one point per second (lightweight-charts needs strictly ascending, unique times)
   const line = useMemo(() => {
     const byTime = new Map<number, number>();
@@ -147,13 +139,8 @@ export function TradeClient() {
     const sp = new URLSearchParams(params.toString());
     sp.set("market", id);
     router.replace(`${pathname}?${sp.toString()}`, { scroll: false });
-    setForm(initialRangeForm);
     setPick(null);
   };
-
-  const onRangeDrag = (which: "start" | "end", price: number) =>
-    setForm((f) => ({ ...f, [which === "start" ? "from" : "to"]: String(Number(price.toFixed(4))) }));
-  const recenter = () => setForm((f) => ({ ...f, from: null, to: null, split: null }));
 
   const onDone = () => {
     book.refresh();
@@ -207,6 +194,19 @@ export function TradeClient() {
           day={day}
           live={book.error ? false : book.data ? true : null}
           loading={book.loading}
+          info={
+            <>
+              <AssetLink asset={market.base} network={config.network} className="text-[11px]" /> / <AssetLink asset={market.quote} network={config.network} className="text-[11px]" />
+              <span>· {market.base.code} issuer</span>
+              {market.base.issuer ? <ExplorerLink kind="account" id={market.base.issuer} network={config.network} className="text-[11px]" /> : "-"}
+              {market.quote.issuer && market.quote.issuer !== market.base.issuer ? (
+                <>
+                  <span>· {market.quote.code} issuer</span>
+                  <ExplorerLink kind="account" id={market.quote.issuer} network={config.network} className="text-[11px]" />
+                </>
+              ) : null}
+            </>
+          }
         />
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -254,39 +254,22 @@ export function TradeClient() {
                 <PriceChart
                   candles={candles.data ?? []}
                   line={line}
-                  depth={depth}
-                  range={rangeLine}
-                  bins={bins}
+                  depth={[]}
                   refPrice={refPrice}
-                  onRangeChange={tab === "range" ? onRangeDrag : undefined}
-                  onRecenter={tab === "range" ? recenter : undefined}
                   height={Math.max(200, chartH)}
+                  baseCode={market.base.code}
+                  quoteCode={market.quote.code}
                 />
               ) : (
                 <div className="flex h-full flex-col justify-center px-4 py-3">
-                  <DepthChart book={bk} height={Math.max(140, chartH - 50)} />
+                  <DepthChart book={bk} height={Math.max(140, chartH - 50)} baseCode={market.base.code} quoteCode={market.quote.code} />
                 </div>
               )}
             </div>
-            <p className="shrink-0 truncate border-t border-border px-3 py-1 text-[10px] text-mutedfg" title={tab === "range" ? "Drag the Start / End handles to set your range" : undefined}>
-              {tab === "range"
-                ? "Drag the Start / End handles to set your range; dashed lines are the levels to quote. Bars at right: the book (pink = inside your range)."
-                : "Candles: Horizon trade aggregations (periods with trades only). Bars at right: cumulative depth."}
-              {candles.error ? <span className="text-destructive"> Candles unavailable: {candles.error}</span> : null}
-              <span className="hidden lg:inline">
-                {" "}
-                · <AssetLink asset={market.base} network={config.network} className="text-[10px]" /> / <AssetLink asset={market.quote} network={config.network} className="text-[10px]" />
-              </span>
-              <span className="hidden xl:inline">
-                {" "}
-                · Issuer of {market.base.code}: {market.base.issuer ? <ExplorerLink kind="account" id={market.base.issuer} network={config.network} className="text-[10px]" /> : "-"} · receipt issuer:{" "}
-                {market.receipt.issuer ? <ExplorerLink kind="account" id={market.receipt.issuer} network={config.network} className="text-[10px]" /> : "-"}
-              </span>
-            </p>
           </section>
 
           {/* order book / trades */}
-          <section className="flex h-[380px] w-full shrink-0 flex-col md:h-auto md:w-[250px] xl:w-[280px]" data-testid="book-card">
+          <section className="flex h-[380px] w-full shrink-0 flex-col md:h-auto md:w-[260px] xl:w-[290px]" data-testid="book-card">
             <div className="flex shrink-0 items-center gap-1 border-b border-border px-2">
               {(
                 [
@@ -344,10 +327,6 @@ export function TradeClient() {
           slippage={slippage}
           onSlippage={setSlippage}
           pick={pick}
-          form={form}
-          setForm={setForm}
-          rangeResult={rangeResult}
-          refPrice={refPrice}
           onDone={onDone}
         />
       </aside>

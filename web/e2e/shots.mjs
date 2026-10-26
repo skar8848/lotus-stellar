@@ -1,4 +1,4 @@
-// Screenshot helper: node e2e/shots.mjs --path /trade --name trade [--mobile] [--wallet maker] [--full] [--click "[data-testid=tab-range]"] [--wait 3000]
+// Screenshot helper: node e2e/shots.mjs --path /trade --name trade [--mobile] [--wallet maker] [--full] [--click "[data-testid=tab-limit]"] [--wait 3000]
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

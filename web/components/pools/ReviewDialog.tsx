@@ -18,8 +18,9 @@ import type { PositionPlan, Side } from "@/lib/poolGrid";
 import { PairError, placeOrder, repostOffers } from "@/lib/orderTx";
 import { fmt } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
+import { cn } from "@/lib/utils";
 import { PairGlyph } from "./bits";
-import type { Destination, OrderEnv } from "./useOrder";
+import { crossText, type Destination, type OrderEnv } from "./useOrder";
 
 type Pending = { side: Side; offers: OrderEnv["ladder"]["offers"]; firstHash: string | null; amount: bigint };
 
@@ -37,8 +38,6 @@ export function ReviewDialog({
   env,
   plan,
   side,
-  refPrice,
-  refSource,
   aprText,
   onDone,
   onSuccessClose,
@@ -49,8 +48,6 @@ export function ReviewDialog({
   env: OrderEnv;
   plan: PositionPlan;
   side: Side;
-  refPrice: number;
-  refSource: string;
   aprText: string | null;
   onDone: () => void;
   onSuccessClose: () => void;
@@ -123,19 +120,36 @@ export function ReviewDialog({
     }
   };
 
-  const receiveCode = side === "Ask" ? (dest.venue === "sdex" ? sq.code : quote.code) : base.code;
   const busy = tx.running || retryTx.running;
 
   return (
     <Dialog open={open} onOpenChange={(v) => (busy ? undefined : close(v))}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg" data-testid="review-dialog" data-strategy={dest.id}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl" data-testid="review-dialog" data-strategy={dest.id}>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2.5">
-            <PairGlyph base={base.code} quote={quote.code} size={24} />
-            Review position
+          <DialogTitle className="flex flex-wrap items-center justify-between gap-2 pr-8">
+            <span className="flex items-center gap-2.5">
+              <PairGlyph base={base.code} quote={quote.code} size={24} />
+              Review position
+            </span>
+            <span
+              className={cn(
+                "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                dest.yieldOn ? "border-green/40 bg-green/5 text-green" : "border-line text-mutedfg",
+              )}
+              data-testid="order-yield-badge"
+              title={dest.yieldOn ? "observed on testnet, not a forecast" : undefined}
+            >
+              {dest.yieldOn ? `${dest.yieldName}${aprText ? ` · ${aprText}` : ""}` : "No yield"}
+            </span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="inline-flex flex-wrap items-center gap-1.5">
             {side === "Ask" ? `Sell ${base.code}` : `Buy ${base.code} with ${quote.code}`} · {TITLE[dest.id]}
+            {dest.venue === "pool" && dest.inst ? (
+              <>
+                {" "}
+                · {dest.inst.label} <ExplorerLink kind="contract" id={dest.inst.contract} network={network} />
+              </>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
 
@@ -148,27 +162,12 @@ export function ReviewDialog({
         <div className="rounded-xl border border-line px-3 py-2.5 text-xs" data-testid="order-details">
           <Row k="Deposit" v={plan.ok ? `${fmt(fromStroops(plan.deposit), 7)} ${sold.code}` : "-"} />
           <Row k="Price range" v={plan.ok && lo && hi ? `${fmt(Number(lo.price) / 1e7, 4, 4)} to ${fmt(Number(hi.price) / 1e7, 4, 4)} ${dest.venue === "sdex" ? sq.code : quote.code}` : "-"} />
-          <Row k={dest.venue === "sdex" ? "Offers" : "Bins"} v={plan.ok ? `${plan.bins.length} (${plan.loBin} to ${plan.hiBin})` : "-"} testId="order-bins" />
           <Row k="Average price" v={plan.ok && plan.avgPrice !== null ? fmt(Number(plan.avgPrice) / 1e7, 4, 4) : "-"} />
-          <Row k="If fully filled you receive" v={plan.ok ? `${fmt(fromStroops(plan.proceedsIfFilled), 2)} ${receiveCode}${dest.venue === "pool" ? " (before the pool fee)" : ""}` : "-"} />
-          <Row k="Yield" v={dest.yieldOn ? `${dest.yieldName}${aprText ? `, ${aprText} observed on testnet (not a forecast)` : ""}` : "none"} />
-          {dest.venue === "pool" && dest.inst ? (
-            <Row
-              k="Pool"
-              v={
-                <span className="inline-flex items-center gap-1.5">
-                  {dest.inst.label} <ExplorerLink kind="contract" id={dest.inst.contract} network={network} />
-                </span>
-              }
-            />
-          ) : null}
           {dest.venue === "pool" && dest.inst ? <Row k="Pool fee" v={`${fmt(dest.inst.feeBps / 100, 2)}% of the ${quote.code} leg of each fill`} /> : null}
           {dest.venue === "sdex" ? <Row k="XLM base reserve" v={`${fmt(dest.reserveXlm, 1)} XLM (0.5 per offer or trustline)`} /> : null}
           {dest.addTrust.length > 0 || dest.needsReceiptTrustline ? (
             <Row k="Adds trustline" v={[...(dest.needsReceiptTrustline ? [receipt] : []), ...dest.addTrust].map((a) => a.code).join(", ")} />
           ) : null}
-          <Row k="Signatures" v={String(dest.signatures)} testId="order-signatures" />
-          <Row k="Reference price" v={`${fmt(refPrice, 4, 4)} (${refSource})`} />
         </div>
 
         {dest.signatures > 1 && plan.ok ? (
@@ -180,7 +179,7 @@ export function ReviewDialog({
         ) : null}
         {dest.crossing > 0 ? (
           <p className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 text-[11px] text-primary" data-testid="order-crosses">
-            {dest.crossing} level{dest.crossing === 1 ? "" : "s"} cross the {base.code}/{sq.code} book and would fill immediately (you act as taker).
+            {crossText(dest, side, base.code, quote.code, receipt.code, plan.ok ? plan.bins.length : 0)}
           </p>
         ) : null}
 

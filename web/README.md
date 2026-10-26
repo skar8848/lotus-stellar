@@ -29,8 +29,8 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 | route | what |
 | --- | --- |
 | `/` | Landing: hero with the ASCII lotus (lazy loaded WebGL, black fallback), how it works, why Stellar, footer |
-| `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), chart (candles + depth panel, or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit** / **Range**), bottom tabs (open orders with Cancel, trade history, balances) |
-| `/pools` | **New position** (Uniswap-style add-liquidity flow, see below): pair + side, range on the draggable chart over live depth, amount, then **Choose your strategy** (Lotus pool / + Blend yield / Stellar DEX / + Blend yield) and a review modal. Below it, **Your positions** across the four strategies (claim / remove / cancel, explorer links). Header: **Swap on the pool** (dialog with the venue comparison) and **Advanced: two-way position** (`?pool=lbond-usdc-twoway`, the previous builder). `?tab=vault` redirects to `/portfolio#receipts` |
+| `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), chart (candles + depth panel, or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit**, plus a "Range orders → Pools" link), bottom tabs (open orders with Cancel, trade history, balances) |
+| `/pools` | **New position** (Uniswap-style add-liquidity flow, see below): pair + side, range on the draggable chart over live depth, amount, then **Choose your strategy** (Lotus pool / + Blend yield / Stellar DEX / + Blend yield) and a review modal. Below it, **Your positions** across the four strategies (claim; locked until filled, then remove; View position / offer on stellar.expert). Header: **Swap on the pool** (lotus-main lite swap in a dialog, with the venue comparison) and **Advanced: two-way position** (`?pool=lbond-usdc-twoway`, the previous builder). `?tab=vault` redirects to `/portfolio#receipts` |
 | `/earn` | Redirect to `/pools` (old vault links with `?strategy=` go to `/portfolio#receipts`) |
 | `/portfolio` | Balances (available vs in offers), open offers, receipts per vault with **Redeem lUSDCb → USDC** (`#receipts`), pool positions, recent activity, USDC-equivalent summary |
 | `/app` | Redirect to `/trade` |
@@ -47,6 +47,14 @@ that trades on the SDEX). Never call the vault a pool.
 Layout: desktop fills the viewport under the nav (market bar, chart | book + trades, resizable bottom panel, order entry in a
 full-height right column); below 1024px everything stacks. Every action is signed in the wallet (no session keys, no auto-sign).
 Clicking a book level fills the Limit price. Swap and Limit have a Buy / Sell toggle and a % of available balance slider.
+Range orders are not on /trade: they are placed from /pools (the order panel links there).
+
+Hover: the chart shows a crosshair with the price on the axis and a legend (time + OHLC of the candle under the cursor,
+or the trade price, plus the cursor price); over the depth bars at its right, a tooltip with the level's price, size
+and cumulative size. The Depth view shows price, size, cumulative size and cumulative total at the nearest level.
+Hovering an order-book row highlights it and every level up to the spread, with a summary (levels, size, total, average).
+The market selector menu is portalled to `<body>`, so the market bar can never clip it; the low-value stats of the
+market bar (mid, spread, 24h high / low) collapse first on narrower screens so it never scrolls at 1280px and up.
 
 - **Swap**: pay asset to receive asset with one `pathPaymentStrictSend`, quoted from Horizon `/paths/strict-send`
   (route, effective price, min received with slippage). `USDC > lUSDC > LBOND` is one transaction. Shows the trustline
@@ -54,13 +62,6 @@ Clicking a book level fills the Limit price. Swap and Limit have a Buy / Sell to
   clear "not authorized by the issuer" message. For USDC/LBOND it adds the **venue comparison** (Lotus pool quote
   next to the SDEX path, better one marked).
 - **Limit**: one `manageSellOffer` (ask or bid). Warns when the price crosses the book.
-- **Range** (pro): one transaction, one signature, N offers (2 to 50 levels). Modes: *One-way sell* (asks only),
-  *One-way buy* (bids only), *Two-sided band* (bids below the split price, asks above). Shapes: uniform, weighted to
-  start, weighted to end, with a live preview. Summary: average price, size, offers, XLM base reserve (0.5 per
-  offer), balances needed. Stellar allows at most 100 operations per transaction; `submitClassicChunked` splits
-  larger lists (the UI caps at 50 levels, so a range is always one transaction). A filled level never flips back
-  by itself (unlike an AMM position): re-quote to continue. Offers only set selling liabilities, so funds stay on
-  the account; when the receipt is in the offers the page says it keeps earning.
 - **Open offers**: from Horizon `/accounts/{id}/offers`, Cancel = `manageSellOffer` with amount 0 and the offer id.
 
 ### /pools: New position
@@ -80,11 +81,22 @@ destinations), `YourPositions.tsx` + `positionsModel.ts`, `useBlendApr.ts` + `li
    instance's bins plus the SDEX LBOND/USDC and LBOND/receipt books**, snapped to the same grid, in LBOND-equivalent.
    Draggable **min / max** handles (snap to bins), the order being built in pink, current price dashed. Range presets
    (Ask: just above, sell the rip, ladder, wide; Bid: just below, buy the dip, ladder, wide), Min / Max price fields
-   with **- / +** steppers (one bin per click), weight (even / front / back), deposit with balance.
+   with **- / +** steppers (one bin per click), weight (even / front / back), deposit with balance. Hover: crosshair +
+   price at the cursor; over the depth panel, the bin's price and size (pool / SDEX / yours).
+   **Reference price per strategy** (`lib/orderRoute.ts` `referenceFor`): each strategy reads the book it rests on,
+   Lotus pool = the instance's bins then LBOND/USDC, Stellar DEX = LBOND/USDC, DEX + yield = LBOND/receipt (empty
+   book: fallbacks). Before a strategy is chosen the range step uses the most conservative one (Ask: highest, Bid:
+   lowest), so a preset crosses no venue; once chosen (Edit), the chosen strategy's. **Direction rule**
+   (`directionBounds` / `directionError`): a sell range sits at or above that price, a buy range at or below it;
+   handles, fields, steppers and presets are clamped, with a short note, and a strategy whose own price breaks the
+   rule is unavailable.
 3. **Choose your strategy**: four cards, the 2x2 of `lib/orderRoute.ts`, each with a one-line explanation, the
-   expected yield, the number of signatures and, when unavailable, why (curator rule, no instance, > 50 SDEX levels).
-4. **Review** (modal): the one-line summary, details (deposit, range, bins / offers, average price, receive if filled,
-   yield, pool + fee or XLM reserve, trustlines added, signatures, reference price), then **Sign**. The two-transaction
+   expected yield, the number of signatures and, when unavailable, why (direction rule, curator rule "Too close to
+   the price" with a **Change range** button that moves the top to the reference bin minus `PROXIMITY_MIN_BINS`
+   keeping the width, no instance, > 50 SDEX levels). Crossing is re-checked per strategy against its own books
+   (pool: its bins + LBOND/USDC) and warned on the card, in step 2 once a strategy is chosen, and in the review.
+4. **Review** (wide modal): yield badge top right, pool + explorer link in the header, the one-line summary, details
+   (deposit, range, average price, pool fee or XLM reserve, trustlines added), crossing warning, then **Sign**. The two-transaction
    case and the "Post the offers again" retry live in the modal.
 
 | | Yield off | Blend yield |
@@ -101,10 +113,14 @@ destinations), `YourPositions.tsx` + `positionsModel.ts`, `useBlendApr.ts` + `li
 - **Your positions** (`YourPositions.tsx`, lotus-main dashboard table + filters + empty state): pool positions of
   every instance (incl. retired ones, two-way rows tagged "Two-way LP (advanced)") via the /portfolio loader, and SDEX
   ladders: the account's offers selling LBOND for USDC or a receipt, or the reverse, grouped per (pair, side) into
-  one row. Pool rows: status, fill bar, remaining, claimable proceeds + fees, **Claim** / **Remove**. SDEX rows:
-  remaining, **Cancel all** (one classic tx, chunked above 100 offers). Each row expands to its pool / DeFindex
-  contract or per-offer explorer links. One status line for the whole table.
-- **Swap on the pool**: dialog with an instance picker (idle / vault-backed), `PoolSwap` and the venue comparison.
+  one row. Pool rows: status, fill bar, remaining, claimable proceeds + fees, **Claim**; a directional order is
+  **locked until fully filled** (`poolPositionLocked`): "Early redemption · soon" (disabled) instead of Remove, which
+  comes back once filled (two-way LP keeps Remove). SDEX ladders are always locked (a filled offer leaves the book).
+  Same rule on /portfolio. **View position**: the add_position tx on stellar.expert, found from the pool's
+  `position_added` event via RPC `getEvents` (`lib/positionTx.ts`, cached; pool contract page when outside RPC
+  retention); SDEX rows link each offer (`/offer/<id>`). One status line for the whole table.
+- **Swap on the pool**: dialog with an instance picker (idle / vault-backed) and `PoolSwap` in the lotus-main lite
+  layout (Sell card, flip, quoted Buy card, one button; `quote_swap` / `swap(min_out)`), then the venue comparison.
 
 - **Ladder mapping** (`lib/orderRoute.ts`, tested in `tests/order-route.test.mts`): each bin is one SDEX offer at
   `price_at(bin)` with the bin's own amount (same `planPosition` weights as the pool). Ask = `manageSellOffer(LBOND
@@ -132,7 +148,7 @@ destinations), `YourPositions.tsx` + `positionsModel.ts`, `useBlendApr.ts` + `li
   SDEX LBOND/receipt book, else LBOND/USDC, else the pool's own mid (best directional bins), else 1.0. Ask and SDEX
   are never blocked (the card explains it: Ask yield is on proceeds that wait in the vault; a receipt in an SDEX offer
   keeps earning, so the Stellar DEX + Blend yield card stays open). The "Buy the dip" preset keeps every card open.
-- /trade **Range** links to /pools; it stays the free-form SDEX ladder (any levels, two-sided bands).
+- /trade has no Range tab any more: its order panel links to /pools.
 - /portfolio also lists all four kinds: pool positions per instance (claim / remove), and SDEX offers on LBOND/USDC and
   on LBOND/receipt, each with explorer links, plus the receipts with their **Redeem** action.
 
@@ -233,11 +249,11 @@ eliminated from production builds). `node e2e/setup-env.mjs` writes `.env.local`
 npm run test:unit                              # range + pool grid math
 NEXT_DIST_DIR=.next-3200 npx next dev -p 3200 & # a dev server for the browser tests
 node e2e/setup-env.mjs                          # once: dev keys into .env.local
-node e2e/run-flows.mjs                          # SDEX + vault flows on testnet, verified on Horizon
-node e2e/pool-flows.mjs                         # directional pool flows (POOL=<instance id> to pick one; live contract or local simulation)
+node e2e/run-flows.mjs                          # /trade SDEX flows on testnet, verified on Horizon (receipt deposit / redeem: position-flows)
+node e2e/pool-flows.mjs                         # pool flows via New position + swap dialog (POOL=<instance id>); unfilled positions removed on chain (E2E_DEV_SECRET)
 POOL=lbond-usdc-twoway TWOWAY=1 node e2e/pool-flows.mjs   # two-way round trip: add, swap through, swap back, claim fees, remove
-node e2e/position-flows.mjs                     # /pools New position: Ask + Bid on all 4 strategies, Your positions, curator rule, cleanup (remove / cancel), redeem from /portfolio
-node e2e/order-flows.mjs                        # previous New order panel (selectors predate the /pools redesign; kept for reference)
+E2E_DEV_SECRET=<label=S...> node e2e/position-flows.mjs   # /pools New position: Ask + Bid on all 4 strategies, Your positions (locked, View position = creation tx), curator rule + Change range, on-chain cleanup of this run's orders (e2e/chain-cleanup.mjs), redeem from /portfolio
+node e2e/order-flows.mjs                        # /pools reference price + direction rule + crossing per strategy (UI only, no transaction)
 node e2e/portfolio-check.mjs                    # portfolio UI checks (no transactions)
 node e2e/shots.mjs --path /trade --name trade --wallet maker --full   # screenshot helper
 ```
@@ -254,7 +270,7 @@ web/
   app/fonts/        Inter variable (inter-ui 4.1.1 latin subset, SIL OFL) for the cv05 "l with a tail"
   components/ui/    shadcn primitives copied from lotus-main
   components/       Nav, SiteChrome, common (links, tx status, token icon, inputs), VenueComparison
-  components/trade/ chart (lightweight-charts), book panels, swap / limit / range tabs, open offers
+  components/trade/ chart (lightweight-charts), book panels, swap / limit tabs, open offers
   components/pools/ New position wizard, range chart, strategy cards, review modal, Your positions, pool swap,
                     two-way builder (advanced)
   components/vault/ StrategyCard (status badge, still used by /portfolio receipts)
@@ -292,3 +308,7 @@ web/
 - `deposit()` on the Lotus vault returns DeFindex shares, not the minted amount: the UI states the 1:1 mint from
   the amount you typed.
 - `getEvents` only scans about 10k ledgers per call, so `lib/vault.ts` pages through three 9000-ledger windows.
+
+## TODO
+
+- Bonus later: TradingView-style candles

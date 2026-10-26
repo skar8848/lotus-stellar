@@ -1,12 +1,13 @@
-// End-to-end SDEX / vault flows on Stellar TESTNET, driven through the real UI with Playwright and
+// End-to-end /trade (SDEX) flows on Stellar TESTNET, driven through the real UI with Playwright and
 // verified on Horizon.   Usage:  node e2e/run-flows.mjs [flow ...]      (npm run e2e -- flow ...)
 //
 // Needs the dev server (default http://localhost:3200, BASE_URL to override) started with the DEV signer
 // (web/.env.local written by e2e/setup-env.mjs). Accounts are picked through the Connect menu
 // ([data-testid=wallet-connect] > [data-testid=dev-wallet-<label>]); no key is read or printed here.
 //
-// Flows (in order): vault-deposit-redeem, range-sell-5, range-band, limit-order, cancel-offer,
-//                   swap-usdc-lbond, swap-unauthorized-message, cleanup
+// Flows (in order): limit-order, cancel-offer, swap-usdc-lbond, swap-unauthorized-message,
+//                   cleanup. The receipt deposit / redeem (the old vault tab) is covered by e2e/position-flows.mjs:
+//                   Bid + Stellar DEX + Blend yield deposits USDC for the receipt, /portfolio#receipts redeems it.
 // Output: e2e/results/flows-<timestamp>.json, a table on stdout, screenshots in .screenshots/e2e-<flow>.png.
 // Offers created by the tests are remembered in e2e/results/state.json and only THOSE are ever cancelled.
 
@@ -27,9 +28,8 @@ const statePath = path.join(resultsDir, "state.json");
 const DEMO_OFFER_IDS = ["931612", "931613", "931614", "931615", "931616", "931617", "931618"];
 
 // The ACTIVE vault / receipt come from /api/config (deployments/testnet.contract.json), never hardcoded:
-// lUSDC on the idle v1 vault, lUSDCb on the Blend-backed v2. RECEIPT=... / STRATEGY=... override.
+// lUSDC on the idle v1 vault, lUSDCb on the Blend-backed v2. RECEIPT=... overrides.
 let RECEIPT = process.env.RECEIPT || "lUSDC";
-let STRATEGY = process.env.STRATEGY || "";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const short = (h) => (h ? `${h.slice(0, 8)}...` : "-");
@@ -90,17 +90,6 @@ const balanceOf = (acct, code, issuer) => {
   const b = acct?.balances?.find((x) => (code === "XLM" ? x.asset_type === "native" : x.asset_code === code && (!issuer || x.asset_issuer === issuer)));
   return b ? Number(b.balance) : 0;
 };
-const assetQ = (prefix, a) => {
-  if (!a.issuer) return `${prefix}_asset_type=native`;
-  const type = a.code.length <= 4 ? "credit_alphanum4" : "credit_alphanum12";
-  return `${prefix}_asset_type=${type}&${prefix}_asset_code=${a.code}&${prefix}_asset_issuer=${a.issuer}`;
-};
-async function bookOf(base, quote) {
-  const r = await hz(`/order_book?${assetQ("selling", base)}&${assetQ("buying", quote)}&limit=20`);
-  const bids = (r.json?.bids ?? []).map((l) => Number(l.price));
-  const asks = (r.json?.asks ?? []).map((l) => Number(l.price));
-  return { bestBid: bids[0] ?? null, bestAsk: asks[0] ?? null };
-}
 
 // ---------------------------------------------------------------------------
 // UI helpers
@@ -282,169 +271,6 @@ async function waitOfferRows(page, ids, timeoutMs = 30000) {
 const FLOWS = [
   // -------------------------------------------------------------------------
   {
-    name: "vault-deposit-redeem",
-    who: "taker",
-    async run({ page, res, cfg }) {
-      let route = "/pools?tab=vault";
-      const resp = await goto(page, route);
-      let hasTab = await page.locator("[data-testid=vault-tab]").first().waitFor({ timeout: 25000 }).then(() => true).catch(() => false);
-      if (!resp || resp.status() >= 400 || !hasTab) {
-        route = "/earn";
-        await goto(page, route);
-        await page.locator("[data-testid=vault-tab]").first().waitFor({ timeout: 90000 });
-        hasTab = true;
-      }
-      note(res, "route", route);
-      const addr = await connect(page, "taker");
-      note(res, "account", addr);
-
-      const sid = STRATEGY;
-      const strat = cfg.strategies.find((s) => s.id === sid) ?? cfg.strategies[0];
-      if (!strat) throw new Error("no strategy in /api/config");
-      if (strat.id !== sid) note(res, "strategyFallback", `${sid} not found, using ${strat.id}`);
-      const sel = page.locator(`[data-testid=vault-select-${strat.id}]`).first();
-      await sel.waitFor({ timeout: 45000 });
-      await sel.click();
-      note(res, "strategy", { id: strat.id, receipt: strat.receipt.code, status: strat.status });
-
-      const uCode = strat.underlying.code;
-      const rCode = strat.receipt.code;
-      const seen = new Set();
-
-      // ---- deposit 1 USDC
-      const before = await accountOf(addr);
-      await fillIn(page, "vault-deposit-amount", "1");
-      const dep = await waitEnabled(page, "[data-testid=vault-deposit-submit]", 60000);
-      const d = await clickAndWait(page, () => dep.click(), { account: addr, seen });
-      if (d.reloaded) note(res, "uiBannerLost.deposit", true);
-      res.txHashes.push(...d.hashes);
-      const dv = await verifyTx(res, d.hashes[0], "deposit");
-      check(res, "deposit: one invoke_host_function op", dv.ops.length === 1 && dv.ops[0].type === "invoke_host_function", dv.ops.map((o) => o.type).join(","));
-      const abc = dv.ops[0]?.asset_balance_changes;
-      if (abc) note(res, "deposit.asset_balance_changes", abc.map((c) => `${c.type} ${c.amount} ${c.asset_code ?? "XLM"}`));
-      const afterDep = await accountOf(addr);
-      const dU = balanceOf(afterDep, uCode, strat.underlying.issuer) - balanceOf(before, uCode, strat.underlying.issuer);
-      const dR = balanceOf(afterDep, rCode, strat.receipt.issuer) - balanceOf(before, rCode, strat.receipt.issuer);
-      check(res, `deposit: ${uCode} balance -1`, near(dU, -1, 0.001), `delta ${dU}`);
-      check(res, `deposit: ${rCode} balance +1`, near(dR, 1, 0.001), `delta ${dR}`);
-
-      // ---- redeem 1 lUSDC
-      await page.locator("[data-testid=vault-tab-redeem]").first().click();
-      await fillIn(page, "vault-redeem-amount", "1");
-      const red = await waitEnabled(page, "[data-testid=vault-redeem-submit]", 60000);
-      const r = await clickAndWait(page, () => red.click(), { account: addr, seen });
-      if (r.reloaded) note(res, "uiBannerLost.redeem", true);
-      res.txHashes.push(...r.hashes);
-      const rv = await verifyTx(res, r.hashes[0], "redeem");
-      check(res, "redeem: one invoke_host_function op", rv.ops.length === 1 && rv.ops[0].type === "invoke_host_function", rv.ops.map((o) => o.type).join(","));
-      const abc2 = rv.ops[0]?.asset_balance_changes;
-      if (abc2) note(res, "redeem.asset_balance_changes", abc2.map((c) => `${c.type} ${c.amount} ${c.asset_code ?? "XLM"}`));
-      const afterRed = await accountOf(addr);
-      const rU = balanceOf(afterRed, uCode, strat.underlying.issuer) - balanceOf(afterDep, uCode, strat.underlying.issuer);
-      const rR = balanceOf(afterRed, rCode, strat.receipt.issuer) - balanceOf(afterDep, rCode, strat.receipt.issuer);
-      check(res, `redeem: ${uCode} balance +~1`, near(rU, 1, 0.001), `delta ${rU}`);
-      check(res, `redeem: ${rCode} balance -1`, near(rR, -1, 0.001), `delta ${rR}`);
-    },
-  },
-
-  // -------------------------------------------------------------------------
-  {
-    name: "range-sell-5",
-    who: "maker",
-    async run({ page, res }) {
-      const maker = await openTrade(page, "maker");
-      note(res, "account", maker);
-      const before = await offersOf(maker);
-      await page.locator("[data-testid=tab-range]").first().click();
-      await page.locator("[data-testid=range-mode] [data-value=sell]").first().click();
-      await fillIn(page, "range-levels", "5");
-      await fillIn(page, "range-from", "1.03");
-      await fillIn(page, "range-to", "1.07");
-      await fillIn(page, "range-total", "5");
-      await page.locator("[data-testid=range-shape] [data-value=uniform]").first().click();
-      const summary = (await page.locator("[data-testid=range-offers]").first().textContent())?.trim();
-      note(res, "uiSummary.offers", summary);
-      check(res, "UI summary says 5 offers (5 asks, 0 bids)", /^5\b.*5 asks, 0 bids/.test(summary ?? ""), summary);
-      const crossing = await page.locator("[data-testid=range-crosses]").count();
-      check(res, "UI shows no 'crosses the book' warning", crossing === 0, `warnings: ${crossing}`);
-      const btn = await waitEnabled(page, "[data-testid=range-submit]", 60000);
-      note(res, "submitLabel", (await btn.textContent())?.trim());
-      const out = await clickAndWait(page, () => btn.click(), { account: maker });
-      if (out.reloaded) note(res, "uiBannerLost", true);
-      res.txHashes.push(...out.hashes);
-      check(res, "exactly one transaction (one signature)", out.hashes.length === 1, out.hashes.length);
-      const v = await verifyTx(res, out.hashes[0], "range");
-      const msos = v.ops.filter((o) => o.type === "manage_sell_offer");
-      check(res, "5 manage_sell_offer ops", msos.length === 5 && v.ops.length === 5, v.ops.map((o) => o.type).join(","));
-      check(res, "all sell LBOND for lUSDC", msos.every((o) => o.selling_asset_code === "LBOND" && o.buying_asset_code === RECEIPT));
-      const prices = msos.map((o) => Number(o.price)).sort((a, b) => a - b);
-      const want = [1.03, 1.04, 1.05, 1.06, 1.07];
-      check(res, "prices 1.03 .. 1.07", prices.length === 5 && prices.every((p, i) => near(p, want[i], 1e-6)), prices.join(","));
-      check(res, "amounts 1 LBOND each (5 total)", msos.every((o) => near(o.amount, 1, 1e-6)), msos.map((o) => o.amount).join(","));
-      const fresh = await recordCreated(res, "range-sell-5", out.hashes[0], maker, before);
-      check(res, "5 new offers on Horizon", fresh.length === 5, fresh.length);
-      check(res, "new offers sell LBOND for lUSDC at the expected prices", fresh.length === 5 && fresh.map((o) => Number(o.price)).sort((a, b) => a - b).every((p, i) => near(p, want[i], 1e-6)));
-      await waitOfferRows(page, fresh.map((o) => o.id));
-      check(res, "all 5 offers visible in the Open offers table", true);
-    },
-  },
-
-  // -------------------------------------------------------------------------
-  {
-    name: "range-band",
-    who: "maker",
-    async run({ page, res, cfg }) {
-      const maker = await openTrade(page, "maker");
-      note(res, "account", maker);
-      const before = await offersOf(maker);
-
-      // pick a band that does NOT cross the live book: 3 bids below the best bid/ask, 3 asks above both
-      const { bestBid, bestAsk } = await bookOf(cfg.rwa, cfg.receipt);
-      note(res, "liveBook", { bestBid, bestAsk });
-      const lowRef = Math.min(bestBid ?? Infinity, bestAsk ?? Infinity);
-      const highRef = Math.max(bestBid ?? 0, bestAsk ?? 0);
-      const p3 = Number.isFinite(lowRef) ? Math.round((lowRef - 0.02) * 100) / 100 : 0.97; // highest bid level
-      const p4 = highRef > 0 ? Math.round((highRef + 0.02) * 100) / 100 : 1.01; // lowest ask level
-      const step = Math.round((p4 - p3) * 10000) / 10000;
-      const from = Math.round((p3 - 2 * step) * 10000) / 10000;
-      const to = Math.round((p4 + 2 * step) * 10000) / 10000;
-      const split = Math.round(((p3 + p4) / 2) * 10000) / 10000;
-      note(res, "band", { from, to, split, levels: 6, total: 3 });
-      if (from <= 0) throw new Error(`computed band start ${from} is not positive (book too wide?)`);
-
-      await page.locator("[data-testid=tab-range]").first().click();
-      await page.locator("[data-testid=range-mode] [data-value=band]").first().click();
-      await fillIn(page, "range-levels", "6");
-      await fillIn(page, "range-from", from);
-      await fillIn(page, "range-to", to);
-      await fillIn(page, "range-split", split);
-      await fillIn(page, "range-total", "3");
-      await page.locator("[data-testid=range-shape] [data-value=uniform]").first().click();
-      const summary = (await page.locator("[data-testid=range-offers]").first().textContent())?.trim();
-      note(res, "uiSummary.offers", summary);
-      check(res, "UI summary says 6 offers (3 asks, 3 bids)", /^6\b.*3 asks, 3 bids/.test(summary ?? ""), summary);
-      const crossing = await page.locator("[data-testid=range-crosses]").count();
-      check(res, "UI shows no 'crosses the book' warning", crossing === 0, `warnings: ${crossing}`);
-      const btn = await waitEnabled(page, "[data-testid=range-submit]", 60000);
-      const out = await clickAndWait(page, () => btn.click(), { account: maker });
-      if (out.reloaded) note(res, "uiBannerLost", true);
-      res.txHashes.push(...out.hashes);
-      const v = await verifyTx(res, out.hashes[0], "band");
-      const msos = v.ops.filter((o) => o.type === "manage_sell_offer");
-      check(res, "6 manage_sell_offer ops in one tx", msos.length === 6 && v.ops.length === 6 && out.hashes.length === 1, v.ops.map((o) => o.type).join(","));
-      const asks = msos.filter((o) => o.selling_asset_code === "LBOND" && o.buying_asset_code === RECEIPT);
-      const bids = msos.filter((o) => o.selling_asset_code === RECEIPT && o.buying_asset_code === "LBOND");
-      check(res, "3 asks (sell LBOND) and 3 bids (sell lUSDC)", asks.length === 3 && bids.length === 3, `asks ${asks.length}, bids ${bids.length}`);
-      check(res, "asks sell 0.5 LBOND each", asks.every((o) => near(o.amount, 0.5, 1e-6)), asks.map((o) => o.amount).join(","));
-      const fresh = await recordCreated(res, "range-band", out.hashes[0], maker, before);
-      check(res, "6 new offers on Horizon", fresh.length === 6, fresh.length);
-      await waitOfferRows(page, fresh.map((o) => o.id));
-      check(res, "all 6 offers visible in the Open offers table", true);
-    },
-  },
-
-  // -------------------------------------------------------------------------
-  {
     name: "limit-order",
     who: "maker",
     async run({ page, res }) {
@@ -481,7 +307,7 @@ const FLOWS = [
       for (const c of [...state.created].reverse()) {
         if ((await hz(`/offers/${c.id}`)).status === 200) open.push(c);
       }
-      if (open.length === 0) throw new Skip("no still-open offer created by the earlier flows (run range-sell-5 / range-band / limit-order first)");
+      if (open.length === 0) throw new Skip("no still-open offer created by the earlier flows (run limit-order first)");
       const target = open.find((c) => c.flow === "limit-order") ?? open[0];
       note(res, "target", { id: target.id, flow: target.flow, price: target.price });
       if (DEMO_OFFER_IDS.includes(target.id)) throw new Error("refusing to cancel a demo offer");
@@ -692,8 +518,7 @@ async function main() {
   }
   const cfg = await cfgRes.json();
   if (!process.env.RECEIPT) RECEIPT = cfg.receipt.code;
-  if (!STRATEGY) STRATEGY = cfg.strategies.find((x) => x.lotusVault === cfg.lotusVault)?.id ?? cfg.strategies[0]?.id ?? "";
-  console.log(`active receipt ${RECEIPT}, vault strategy ${STRATEGY}`);
+  console.log(`active receipt ${RECEIPT}`);
 
   // baseline: maker's offers that do not belong to the tests (kept from the first run until cleanup removes it)
   const makerAddr = cfg.accounts?.maker;

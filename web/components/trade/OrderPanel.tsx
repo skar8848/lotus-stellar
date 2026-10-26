@@ -1,19 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Market } from "@/lib/markets";
-import type { RangeResult } from "@/lib/range";
 import type { OrderBook } from "@/lib/stellar";
 import { cn } from "@/lib/utils";
 import { LimitTab, type PricePick } from "./LimitTab";
-import { RangeTab } from "./RangeTab";
 import { SwapTab } from "./SwapTab";
-import type { RangeForm } from "./rangeState";
 
-export type OrderTab = "swap" | "limit" | "range";
+export type OrderTab = "swap" | "limit";
 
 const PRESETS = [0.1, 0.5, 1];
 
@@ -53,10 +51,9 @@ function SlippageSettings({ slippage, onChange }: { slippage: number; onChange: 
 const TYPES: { value: OrderTab; label: string; title: string }[] = [
   { value: "swap", label: "Swap", title: "Market order: one path payment through the books" },
   { value: "limit", label: "Limit", title: "One resting offer at your price" },
-  { value: "range", label: "Range", title: "A ladder of offers across a price range, one transaction" },
 ];
 
-/** The order-entry column: Swap (taker) | Limit (one offer) | Range (SDEX ladder). Every action is signed in the wallet. */
+/** The order-entry column: Swap (taker) | Limit (one offer). Range orders live in /pools. Every action is signed in the wallet. */
 export function OrderPanel({
   market,
   book,
@@ -65,10 +62,6 @@ export function OrderPanel({
   slippage,
   onSlippage,
   pick,
-  form,
-  setForm,
-  rangeResult,
-  refPrice,
   onDone,
 }: {
   market: Market;
@@ -78,10 +71,6 @@ export function OrderPanel({
   slippage: number;
   onSlippage: (v: number) => void;
   pick: PricePick;
-  form: RangeForm;
-  setForm: (f: RangeForm) => void;
-  rangeResult: RangeResult;
-  refPrice: number;
   onDone: () => void;
 }) {
   return (
@@ -109,11 +98,13 @@ export function OrderPanel({
             {t.label}
           </button>
         ))}
+        <Link href="/pools" className="ml-auto self-center text-[11px] text-mutedfg transition hover:text-primary" data-testid="range-orders-link" title="Range orders (directional liquidity on a price grid) are placed from Pools">
+          Range orders &rarr; Pools
+        </Link>
       </div>
       <div className="px-3 pb-4 pt-2">
         {tab === "swap" ? <SwapTab key={market.id} market={market} slippageBps={Math.round(slippage * 100)} onDone={onDone} /> : null}
         {tab === "limit" ? <LimitTab key={market.id} market={market} book={book} pick={pick} onDone={onDone} /> : null}
-        {tab === "range" ? <RangeTab market={market} book={book} form={form} setForm={setForm} result={rangeResult} refPrice={refPrice} onDone={onDone} /> : null}
       </div>
     </div>
   );

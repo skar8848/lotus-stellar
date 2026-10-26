@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, ExplorerLink, Panel, Spinner, TxStatus } from "@/components/common";
+import { EARLY_REDEMPTION_LABEL, poolPositionLocked } from "@/components/pools/positionsModel";
 import { useAccount } from "@/lib/account";
 import { useNet } from "@/lib/config-context";
 import type { PoolInstance } from "@/lib/config-types";
@@ -247,10 +248,16 @@ function PoolSection({ entry, network, actions }: { entry: PoolData; network: st
                           {busy === `claim-${id}` ? <Spinner /> : null}
                           Claim
                         </Button>
-                        <Button size="xs" variant="outline" disabled={running} onClick={() => act("remove", p, inst)} data-testid={`pool-remove-${id}`}>
-                          {busy === `remove-${id}` ? <Spinner /> : null}
-                          Remove
-                        </Button>
+                        {poolPositionLocked(p) ? (
+                          <Button size="xs" variant="outline" disabled title="Locked until the order is fully filled. Early redemption is coming soon." data-testid={`pool-early-${id}`}>
+                            {EARLY_REDEMPTION_LABEL}
+                          </Button>
+                        ) : (
+                          <Button size="xs" variant="outline" disabled={running} onClick={() => act("remove", p, inst)} data-testid={`pool-remove-${id}`}>
+                            {busy === `remove-${id}` ? <Spinner /> : null}
+                            Remove
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -262,7 +269,7 @@ function PoolSection({ entry, network, actions }: { entry: PoolData; network: st
       )}
       {positions.length > 0 ? (
         <p className="mt-3 text-[11px] text-mutedfg">
-          Directional positions only move one way: remaining inventory goes down, proceeds and fees go up and are never re-offered. Claim pays out proceeds and fees and keeps the position open; Remove also returns what is left.
+          Directional positions only move one way: remaining inventory goes down, proceeds and fees go up and are never re-offered. Claim pays out proceeds and fees and keeps the position open. A directional position is locked until fully filled (early redemption is coming); Remove then closes it.
           Two-way positions trade in both directions: they hold both {inst.base.code} and {inst.quote.code} right now, so you can end up with more of either asset; Claim pays fees only and Remove pays both reserves plus fees.
         </p>
       ) : null}

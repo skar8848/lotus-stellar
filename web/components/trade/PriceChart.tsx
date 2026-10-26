@@ -1,11 +1,13 @@
 "use client";
 
-import { forwardRef, useEffect, useRef } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { Crosshair, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import {
   CandlestickSeries,
   ColorType,
+  CrosshairMode,
   LineSeries,
+  type MouseEventParams,
   createChart,
   type IChartApi,
   type IPriceLine,
@@ -13,10 +15,25 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/stellar";
+import { cn } from "@/lib/utils";
 import { DepthPrimitive, PANEL_FRAC, type DepthBar } from "./depthPrimitive";
 
 export type ChartRange = { start: number; end: number };
 export type LinePoint = { time: number; value: number };
+
+type Hover = {
+  x: number;
+  y: number;
+  price: number | null;
+  time: number | null;
+  ohlc: { open: number; high: number; low: number; close: number } | null;
+  value: number | null;
+  bar: DepthBar | null;
+};
+
+const fmtTime = (t: number) =>
+  new Date(t * 1000).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+const fmtSize = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 const fmtPrice = (n: number) => (n >= 1000 ? Math.round(n).toLocaleString("en-US") : n >= 1 ? n.toFixed(4) : n.toPrecision(4));
 
@@ -37,6 +54,8 @@ export function PriceChart({
   onRangeChange,
   onRecenter,
   height = 380,
+  baseCode = "",
+  quoteCode = "",
 }: {
   candles: Candle[];
   line: LinePoint[];
@@ -47,7 +66,10 @@ export function PriceChart({
   onRangeChange?: (which: "start" | "end", price: number) => void;
   onRecenter?: () => void;
   height?: number;
+  baseCode?: string;
+  quoteCode?: string;
 }) {
+  const [hover, setHover] = useState<Hover | null>(null);
   const interactive = !!onRangeChange && !!range;
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -64,6 +86,7 @@ export function PriceChart({
   const depthRef = useRef<DepthBar[]>(depth);
   const onChangeRef = useRef(onRangeChange);
   const candleCount = useRef(0);
+  const anchorRef = useRef(false); // the invisible reference-price candle (no trades): no OHLC legend for it
   const providerRef = useRef<unknown>(null);
   useEffect(() => {
     rangeRef.current = range;
@@ -86,7 +109,11 @@ export function PriceChart({
       grid: { vertLines: { color: "rgba(255,255,255,0.04)" }, horzLines: { color: "rgba(255,255,255,0.04)" } },
       rightPriceScale: { borderColor: "rgba(255,255,255,0.08)" },
       timeScale: { borderColor: "rgba(255,255,255,0.08)", timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "rgba(255,255,255,0.35)", width: 1, style: 3, labelVisible: true, labelBackgroundColor: "#1f2933" },
+        horzLine: { color: "rgba(255,255,255,0.35)", width: 1, style: 3, labelVisible: true, labelBackgroundColor: "#1f2933" },
+      },
       handleScroll: true,
       handleScale: true,
     });
@@ -138,6 +165,40 @@ export function PriceChart({
     lineRef.current = lineSeries;
     primitiveRef.current = primitive;
 
+    // hover: price at the cursor, OHLC / value of the bar under it, and the depth level when over the right panel
+    const onMove = (p: MouseEventParams) => {
+      const cont = containerRef.current;
+      if (!p.point || !cont || p.point.x < 0 || p.point.y < 0) {
+        setHover(null);
+        return;
+      }
+      const { x, y } = p.point;
+      const price = candleSeries.coordinateToPrice(y) as number | null;
+      const cd = p.seriesData.get(candleSeries) as { open?: number; high?: number; low?: number; close?: number } | undefined;
+      const ld = p.seriesData.get(lineSeries) as { value?: number } | undefined;
+      const ohlc = cd && cd.open != null && cd.high != null && cd.low != null && cd.close != null && !anchorRef.current
+        ? { open: cd.open, high: cd.high, low: cd.low, close: cd.close }
+        : null;
+      // the depth panel is drawn over the right PANEL_FRAC of the pane (pane width = timescale width)
+      const paneW = chart.timeScale().width();
+      let bar: DepthBar | null = null;
+      if (x >= paneW * (1 - PANEL_FRAC)) {
+        let best = Infinity;
+        for (const d of depthRef.current) {
+          const dy = candleSeries.priceToCoordinate(d.price);
+          if (dy == null) continue;
+          const dist = Math.abs(dy - y);
+          if (dist < best && dist <= 8) {
+            best = dist;
+            bar = d;
+          }
+        }
+      }
+      primitive.setHover(bar ? bar.price : null);
+      setHover({ x, y, price, time: p.time != null ? (p.time as number) : null, ohlc: bar ? null : ohlc, value: bar ? null : ld?.value ?? null, bar });
+    };
+    chart.subscribeCrosshairMove(onMove);
+
     const resize = () => containerRef.current && chart.applyOptions({ width: containerRef.current.clientWidth });
     resize();
     const ro = new ResizeObserver(resize);
@@ -165,6 +226,7 @@ export function PriceChart({
 
     return () => {
       cancelAnimationFrame(raf);
+      chart.unsubscribeCrosshairMove(onMove);
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -194,6 +256,7 @@ export function PriceChart({
     const cs = candleRef.current;
     const ls = lineRef.current;
     if (!cs || !ls) return;
+    anchorRef.current = false;
     if (candles.length > 0) {
       cs.setData(candles.map((c) => ({ ...c, time: c.time as UTCTimestamp })));
       ls.setData([]);
@@ -206,6 +269,7 @@ export function PriceChart({
       ls.setData([]);
       candleCount.current = 1;
       if (refPrice && refPrice > 0) {
+        anchorRef.current = true;
         const t = Math.floor(Date.now() / 1000) as UTCTimestamp;
         cs.setData([{ time: t, open: refPrice, high: refPrice, low: refPrice, close: refPrice, color: "rgba(0,0,0,0)", borderColor: "rgba(0,0,0,0)", wickColor: "rgba(0,0,0,0)" }]);
       } else {
@@ -287,10 +351,49 @@ export function PriceChart({
   }
 
   const empty = candles.length === 0 && line.length === 0;
+  const tipLeft = hover ? Math.max(4, hover.x - 190) : 0;
 
   return (
-    <div className="relative w-full" style={{ height }} data-testid="price-chart">
+    <div className="relative w-full" style={{ height }} data-testid="price-chart" onMouseLeave={() => { setHover(null); primitiveRef.current?.setHover(null); }}>
       <div ref={containerRef} className="h-full w-full" />
+      {/* legend: OHLC (or trade price) of the bar under the cursor + the price at the cursor */}
+      {hover && !hover.bar && (hover.ohlc || hover.value != null || hover.price != null) ? (
+        <div className="num pointer-events-none absolute left-2 top-2 z-20 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 rounded-md border border-border bg-card/85 px-2 py-1 text-[11px] backdrop-blur" data-testid="chart-legend">
+          {hover.time != null && (hover.ohlc || hover.value != null) ? <span className="text-mutedfg">{fmtTime(hover.time)}</span> : null}
+          {hover.ohlc ? (
+            <>
+              <span><span className="text-mutedfg">O</span> {fmtPrice(hover.ohlc.open)}</span>
+              <span><span className="text-mutedfg">H</span> {fmtPrice(hover.ohlc.high)}</span>
+              <span><span className="text-mutedfg">L</span> {fmtPrice(hover.ohlc.low)}</span>
+              <span className={hover.ohlc.close >= hover.ohlc.open ? "text-green" : "text-red"}><span className="text-mutedfg">C</span> {fmtPrice(hover.ohlc.close)}</span>
+            </>
+          ) : hover.value != null ? (
+            <span><span className="text-mutedfg">Trade</span> {fmtPrice(hover.value)}</span>
+          ) : null}
+          {hover.price != null && hover.price > 0 ? (
+            <span data-testid="chart-cursor-price"><span className="text-mutedfg">Cursor</span> {fmtPrice(hover.price)}{quoteCode ? <span className="text-mutedfg"> {quoteCode}</span> : null}</span>
+          ) : null}
+        </div>
+      ) : null}
+      {/* depth panel tooltip: the level under the cursor */}
+      {hover?.bar ? (
+        <div
+          className="num pointer-events-none absolute z-20 w-[180px] rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur"
+          style={{ left: tipLeft, top: Math.max(4, hover.y - 30) }}
+          data-testid="depth-tooltip"
+        >
+          <div className={cn("font-medium", hover.bar.side === "bid" ? "text-green" : hover.bar.side === "ask" ? "text-red" : "")}>
+            {hover.bar.side === "bid" ? "Bid" : hover.bar.side === "ask" ? "Ask" : "Level"} {fmtPrice(hover.bar.price)}
+            {quoteCode ? <span className="text-mutedfg"> {quoteCode}</span> : null}
+          </div>
+          {hover.bar.size != null ? (
+            <div className="flex justify-between gap-2"><span className="text-mutedfg">Size</span><span>{fmtSize(hover.bar.size)} {baseCode}</span></div>
+          ) : null}
+          {hover.bar.cum != null ? (
+            <div className="flex justify-between gap-2"><span className="text-mutedfg">Cumulative</span><span>{fmtSize(hover.bar.cum)} {baseCode}</span></div>
+          ) : null}
+        </div>
+      ) : null}
       {empty ? (
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-border bg-card/80 px-2 py-1 text-[11px] text-mutedfg backdrop-blur">
           No trades in this market yet. Depth is shown at right.

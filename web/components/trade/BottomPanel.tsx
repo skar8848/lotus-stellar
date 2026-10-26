@@ -135,7 +135,8 @@ function TradeHistory({ markets }: { markets: Market[] }) {
   const rows = useMemo(
     () =>
       (trades.data ?? []).map((t) => {
-        const boughtBaseH = (t.baseAccount === me && !t.baseIsSeller) || (t.counterAccount === me && t.baseIsSeller);
+        // each side gives its own asset: the counter account receives the base (base_is_seller only says which side rested)
+        const boughtBaseH = t.counterAccount === me;
         const direct = markets.find((m) => assetKey(m.base) === assetKey(t.base) && assetKey(m.quote) === assetKey(t.counter));
         const reversed = direct ? null : markets.find((m) => assetKey(m.base) === assetKey(t.counter) && assetKey(m.quote) === assetKey(t.base));
         if (reversed) {

@@ -30,7 +30,8 @@ export type Market = {
 
 const sameRef = (a: AssetRef, b: AssetRef) => a.code === b.code && (a.issuer ?? null) === (b.issuer ?? null);
 
-export function buildMarkets(config: LotusConfig): Market[] {
+/** `activeOnly`: only the active Lotus vault's receipt markets (the /trade selector hides older vaults). */
+export function buildMarkets(config: LotusConfig, opts: { activeOnly?: boolean } = {}): Market[] {
   const out: Market[] = [];
   const taken = new Set<string>();
   const push = (m: Omit<Market, "id" | "label">) => {
@@ -52,6 +53,7 @@ export function buildMarkets(config: LotusConfig): Market[] {
   for (const s of pools) {
     // an announced vault ("coming-soon") has no receipt on the SDEX yet; a receipt is always a credit asset
     if (s.status === "coming-soon" || !s.receipt.issuer || !assetReady(s.receipt)) continue;
+    if (opts.activeOnly && config.lotusVault && s.lotusVault && s.lotusVault !== config.lotusVault) continue;
     if (assetReady(config.rwa) && !sameRef(config.rwa, s.receipt)) {
       push({
         base: config.rwa,
@@ -66,14 +68,15 @@ export function buildMarkets(config: LotusConfig): Market[] {
     }
     if (assetReady(s.underlying) && !sameRef(s.underlying, s.receipt)) {
       push({
-        base: s.underlying,
-        quote: s.receipt,
+        // shown as receipt/USDC: the price of one receipt in dollars (about 1)
+        base: s.receipt,
+        quote: s.underlying,
         kind: "peg",
         strategyId: s.id,
         strategyLabel: s.label,
         receipt: s.receipt,
         underlying: s.underlying,
-        blurb: `Peg book: ${s.underlying.code} against ${s.receipt.code}, redeemable 1:1 through the Lotus vault.`,
+        blurb: `Peg book: ${s.receipt.code} priced in ${s.underlying.code}, redeemable 1:1 through the Lotus vault.`,
       });
     }
     // BOND/USDC once, right after the active vault's markets
@@ -105,6 +108,10 @@ export function pickMarket(markets: Market[], param: string | null | undefined):
     const p = decodeURIComponent(param).replace("/", "-").toLowerCase();
     const hit = markets.find((m) => m.id.toLowerCase() === p);
     if (hit) return hit;
+    // old links named the peg book USDC-receipt
+    const flipped = p.split("-").reverse().join("-");
+    const old = markets.find((m) => m.kind === "peg" && m.id.toLowerCase() === flipped);
+    if (old) return old;
   }
   return markets[0];
 }

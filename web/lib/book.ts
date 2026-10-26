@@ -31,7 +31,7 @@ export function midPrice(book: OrderBook | null): number | null {
   return bid ?? ask;
 }
 
-export type DepthPoint = { price: number; depth: number; side: "bid" | "ask" };
+export type DepthPoint = { price: number; depth: number; side: "bid" | "ask"; size: number; cum: number };
 
 /** Cumulative depth points normalised to [0, 1] for the chart's right-hand panel. */
 export function depthBars(book: OrderBook | null, limit = 30): DepthPoint[] {
@@ -40,7 +40,7 @@ export function depthBars(book: OrderBook | null, limit = 30): DepthPoint[] {
   const asks = bookRows(book.asks, "ask", limit);
   const max = Math.max(bids[bids.length - 1]?.cum ?? 0, asks[asks.length - 1]?.cum ?? 0, 1e-12);
   return [
-    ...bids.map((r) => ({ price: r.price, depth: r.cum / max, side: "bid" as const })),
-    ...asks.map((r) => ({ price: r.price, depth: r.cum / max, side: "ask" as const })),
+    ...bids.map((r) => ({ price: r.price, depth: r.cum / max, side: "bid" as const, size: r.size, cum: r.cum })),
+    ...asks.map((r) => ({ price: r.price, depth: r.cum / max, side: "ask" as const, size: r.size, cum: r.cum })),
   ];
 }

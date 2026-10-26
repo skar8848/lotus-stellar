@@ -6,6 +6,14 @@ import {
   MAX_SDEX_LEVELS,
   PROXIMITY_MIN_BINS,
   binsBelowReference,
+  conservativeReference,
+  directionBounds,
+  directionError,
+  maxYieldBidHiBin,
+  rangeForYield,
+  crossingLevels,
+  referenceFor,
+  targetBooks,
   ladderFromPlan,
   offerPriceForBin,
   orderSummary,
@@ -115,6 +123,92 @@ test("reference price fallbacks", () => {
   assert.equal(pickReference({ receiptMid: null, usdcMid: 1.01, poolMid: 1 }).price, 1.01);
   assert.equal(pickReference({ receiptMid: null, usdcMid: null, poolMid: 1.002 }).price, 1.002);
   assert.equal(pickReference({ receiptMid: null, usdcMid: NaN, poolMid: null }).price, 1);
+});
+
+// the reported bug: receipt book lower than LBOND/USDC, a "just above" ask priced from the receipt mid crossed the USDC bids
+const M = {
+  receipt: { bid: 0.99, ask: 1.0 }, // mid 0.995
+  usdc: { bid: 1.008, ask: 1.012 }, // mid 1.010
+  pool: { bid: 1.001, ask: 1.003 }, // mid 1.002
+};
+const EMPTY = { bid: null, ask: null };
+const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-12, `${a} != ${b}`);
+
+test("reference price per strategy: each strategy reads its own book", () => {
+  near(referenceFor("sdex", false, M).price, 1.01);
+  assert.equal(referenceFor("sdex", false, M).source, "SDEX USDC book");
+  near(referenceFor("sdex", true, M).price, 0.995);
+  assert.equal(referenceFor("sdex", true, M).source, "SDEX receipt book");
+  near(referenceFor("pool", false, M).price, 1.002);
+  assert.equal(referenceFor("pool", false, M).source, "Lotus pool bins");
+  near(referenceFor("pool", true, M).price, 1.002);
+});
+
+test("reference price per strategy: fallbacks when the target book is empty", () => {
+  // pool without bins -> LBOND/USDC, then receipt
+  near(referenceFor("pool", false, { ...M, pool: EMPTY }).price, 1.01);
+  near(referenceFor("pool", false, { ...M, pool: EMPTY, usdc: EMPTY }).price, 0.995);
+  // SDEX without yield never falls back to the receipt book while the pool has a price
+  near(referenceFor("sdex", false, { ...M, usdc: EMPTY }).price, 1.002);
+  near(referenceFor("sdex", true, { ...M, receipt: EMPTY }).price, 1.01);
+  // one-sided book: that side
+  near(referenceFor("sdex", false, { ...M, usdc: { bid: 1.008, ask: null } }).price, 1.008);
+  // nothing anywhere, or junk
+  assert.deepEqual(referenceFor("sdex", true, { usdc: EMPTY, receipt: { bid: NaN, ask: 0 }, pool: EMPTY }), { price: 1, source: "default 1.0" });
+});
+
+test("range-step reference before a strategy is chosen: conservative per side", () => {
+  const refs = [referenceFor("pool", false, M), referenceFor("pool", true, M), referenceFor("sdex", false, M), referenceFor("sdex", true, M)];
+  near(conservativeReference("Ask", refs).price, 1.01);
+  near(conservativeReference("Bid", refs).price, 0.995);
+  // the default 1.0 of an empty venue is ignored
+  assert.equal(conservativeReference("Ask", [{ price: 1, source: "default 1.0" }, { price: 0.98, source: "SDEX USDC book" }]).price, 0.98);
+  assert.equal(conservativeReference("Bid", [{ price: 1, source: "default 1.0" }]).price, 1);
+});
+
+test("crossing is checked against the strategy's own books", () => {
+  assert.deepEqual(targetBooks("pool", true), ["pool", "usdc"]);
+  // "Just above" (+0.1%..+1%) from the receipt mid 0.995: on LBOND/USDC (bid 1.008) the first levels cross
+  const askLevels = [0.996, 1.0, 1.005, 1.009];
+  assert.equal(crossingLevels("Ask", askLevels, "sdex", true, M), 0);
+  assert.equal(crossingLevels("Ask", askLevels, "sdex", false, M), 3); // 1.009 is above the 1.008 bid
+  assert.equal(crossingLevels("Ask", askLevels, "pool", false, M), 3); // max(pool bid 1.001, USDC bid 1.008)
+  assert.equal(crossingLevels("Ask", askLevels, "pool", false, { ...M, usdc: EMPTY }), 2); // pool bid 1.001 only
+  // the same preset from the USDC mid 1.010 crosses nothing on LBOND/USDC
+  assert.equal(crossingLevels("Ask", [1.011, 1.015, 1.02], "sdex", false, M), 0);
+  // bids: at or above the best ask
+  assert.equal(crossingLevels("Bid", [0.99, 1.0, 1.003], "pool", false, M), 1);
+  assert.equal(crossingLevels("Bid", [0.99, 1.0, 1.003], "sdex", true, M), 2);
+  assert.equal(crossingLevels("Bid", [0.99], "sdex", false, { ...M, usdc: EMPTY }), 0);
+});
+
+test("direction rule: sell at or above, buy at or below the reference", () => {
+  const ref = Number(priceAt(5, STEP)) / 1e7; // exactly on bin 5
+  assert.deepEqual(directionBounds("Ask", STEP, ref), { minBin: 5, maxBin: MAX_BIN });
+  assert.deepEqual(directionBounds("Bid", STEP, ref), { minBin: MIN_BIN, maxBin: 5 });
+  const mid = (Number(priceAt(5, STEP)) + Number(priceAt(6, STEP))) / 2e7; // between bins 5 and 6
+  assert.equal(directionBounds("Ask", STEP, mid).minBin, 6);
+  assert.equal(directionBounds("Bid", STEP, mid).maxBin, 5);
+  assert.equal(directionError("Ask", 6, 10, STEP, mid), null);
+  assert.match(directionError("Ask", 5, 10, STEP, mid) ?? "", /sell range/);
+  assert.equal(directionError("Bid", 0, 5, STEP, mid), null);
+  assert.match(directionError("Bid", 0, 6, STEP, mid) ?? "", /buy range/);
+  // no reference: no constraint
+  assert.equal(directionError("Ask", -50, 0, STEP, 0), null);
+});
+
+test("change range for the curator rule: top = reference bin - PROXIMITY_MIN_BINS, width kept", () => {
+  for (const ref of [1, 1.00006, 0.98995, Number(priceAt(-7, STEP)) / 1e7]) {
+    const top = maxYieldBidHiBin(STEP, ref);
+    assert.equal(yieldGuard({ side: "Bid", venue: "pool", hiBin: top, stepBps: STEP, refPrice: ref }).blocked, false);
+    assert.equal(yieldGuard({ side: "Bid", venue: "pool", hiBin: top + 1, stepBps: STEP, refPrice: ref }).blocked, true);
+  }
+  assert.equal(maxYieldBidHiBin(STEP, 1), -PROXIMITY_MIN_BINS);
+  assert.deepEqual(rangeForYield(-8, -2, STEP, 1), { loBin: -16, hiBin: -10 });
+  // already far enough: unchanged top
+  assert.deepEqual(rangeForYield(-30, -20, STEP, 1), { loBin: -30, hiBin: -20 });
+  // width clipped at the grid edge
+  assert.equal(rangeForYield(MIN_BIN, -2, STEP, 1).loBin, MIN_BIN);
 });
 
 test("summary line", () => {

@@ -22,7 +22,7 @@ export function FaucetHint() {
   if (!notFunded && missing.length === 0) return null;
   return (
     <div className="border-b border-primary/20 bg-primary/5" data-testid="faucet-hint">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-1.5 text-xs sm:px-6">
+      <div className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-1.5 text-xs">
         <span className="text-mutedfg">
           {notFunded
             ? "This wallet is not on testnet yet."

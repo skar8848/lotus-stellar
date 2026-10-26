@@ -110,10 +110,10 @@ function SwapDialog({ open, onOpenChange, list, onDone }: { open: boolean; onOpe
   if (!inst || !client) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-md" data-testid="swap-dialog">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[460px]" data-testid="swap-dialog">
         <DialogHeader>
           <DialogTitle>Swap on the Lotus pool</DialogTitle>
-          <DialogDescription>Takes liquidity from the pool bins, compared live with the SDEX path for the same input.</DialogDescription>
+          <DialogDescription className="text-xs">Fills from the pool bins; the SDEX path for the same input is quoted below.</DialogDescription>
         </DialogHeader>
         {list.length > 1 ? (
           <Segmented value={inst.id} onChange={setId} size="sm" testId="swap-pool-picker" options={list.map((p) => ({ value: p.id, label: p.label }))} />

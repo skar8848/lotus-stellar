@@ -1,258 +1,213 @@
-// "New order" flows through the real UI with the dev wallet, on testnet: the four destinations
-// (Pool | SDEX) x (yield off | on) for Bid, plus Ask on SDEX + yield (and Ask on the other three with ASKS=1).
-// Every transaction hash is verified on Horizon. Then: the proximity rule (UI only), the portfolio listing,
-// and cleanup (cancel the offers, remove the pool positions, redeem the receipt minted by the 2-tx flow).
-// Usage: node e2e/order-flows.mjs   (BASE_URL defaults to :3200, WHO=taker by default)
+// /pools "New position": reference price and "crosses the book" checks per strategy, through the real UI with the
+// dev wallet on testnet. UI only: nothing is signed (the review modal is opened, then closed).
+//   1. ask-preset-no-cross   Ask + "Just above" before a strategy is chosen: reference = highest strategy reference,
+//                            no strategy card warns about crossing
+//   2. bid-preset-no-cross   Bid + "Just below": reference = lowest strategy reference, no card warns
+//   3. direction-rule-clamps a sell min typed under the price / a buy max above it is clamped, with a note
+//   4. pool-crossing-warned  Lotus pool chosen, ask from the pool price while the pool is under the LBOND/USDC bids:
+//                            the pool card and the review modal warn (skipped when the market does not allow it)
+//   5. reference-follows-strategy  once Stellar DEX is chosen, the range step prices from LBOND/USDC
+// The full create / list / cleanup flows on the four strategies are e2e/position-flows.mjs.
+// Usage: BASE_URL=http://localhost:3700 node e2e/order-flows.mjs   (WHO=taker by default)
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BASE_URL, launch } from "./browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const shots = path.resolve(here, "..", ".screenshots");
+const shots = process.env.SHOTS || path.resolve(here, "..", ".screenshots");
 const resultsDir = path.resolve(here, "results");
 fs.mkdirSync(shots, { recursive: true });
 fs.mkdirSync(resultsDir, { recursive: true });
-const HORIZON = "https://horizon-testnet.stellar.org";
+const HORIZON = process.env.HORIZON_URL || "https://horizon-testnet.stellar.org";
 const WHO = process.env.WHO || "taker";
-const AMOUNT = process.env.AMOUNT || "10";
-const ONLY = process.env.ONLY ? process.env.ONLY.split(",") : null;
+const STRATS = ["pool", "pool-yield", "sdex", "sdex-yield"];
 
 const results = [];
-const created = { positions: [], deposits: [] };
-// EXTRA_REMOVE="pool-id:position-id,..." also removes positions left by an earlier run
-for (const x of (process.env.EXTRA_REMOVE ?? "").split(",").filter(Boolean)) {
-  const [pool, id] = x.split(":");
-  created.positions.push({ pool, id: Number(id) });
-}
-let lastResult = null;
+const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
+const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(b));
 
-async function horizonTx(hash) {
-  for (let i = 0; i < 10; i++) {
-    const r = await fetch(`${HORIZON}/transactions/${hash}`);
-    if (r.ok) return r.json();
-    await new Promise((res) => setTimeout(res, 1500));
-  }
-  return null;
+const cfgRes = await fetch(`${BASE_URL}/api/config`).catch(() => null);
+if (!cfgRes?.ok) {
+  console.error(`cannot reach ${BASE_URL}/api/config: is the dev server running?`);
+  process.exit(2);
+}
+const cfg = await cfgRes.json();
+const pool0 = cfg.pools.find((p) => p.status !== "retired" && p.status !== "coming-soon") ?? cfg.pools[0];
+const base = pool0.base;
+const quote = pool0.quote;
+
+const assetQs = (prefix, a) =>
+  a.code === "XLM"
+    ? `${prefix}_asset_type=native`
+    : `${prefix}_asset_type=${a.code.length <= 4 ? "credit_alphanum4" : "credit_alphanum12"}&${prefix}_asset_code=${a.code}&${prefix}_asset_issuer=${a.issuer}`;
+async function bestBid(b, q) {
+  const r = await fetch(`${HORIZON}/order_book?${assetQs("selling", b)}&${assetQs("buying", q)}&limit=1`);
+  const j = await r.json();
+  return j.bids?.[0] ? Number(j.bids[0].price) : null;
 }
 
 const browser = await launch();
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+const page = await ctx.newPage();
+const consoleErrors = [];
+page.on("console", (m) => {
+  if (m.type() === "error" && !/MetaMask|Transport request timed out/.test(m.text())) consoleErrors.push(m.text().slice(0, 300));
+});
+page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message.slice(0, 300)));
 
-async function connect(page, url) {
-  await page.goto(`${BASE_URL}${url}`, { waitUntil: "domcontentloaded" });
-  if ((await page.locator('[data-testid="wallet-button"]').count()) === 0) {
-    await page.click('[data-testid="wallet-connect"]');
-    await page.click(`[data-testid="dev-wallet-${WHO}"]`);
-  }
-  await page.waitForSelector('[data-testid="wallet-button"]');
-  await page.waitForTimeout(6000); // balances + books polled
+await page.goto(`${BASE_URL}/pools`, { waitUntil: "domcontentloaded" });
+if ((await page.locator('[data-testid="wallet-button"]').count()) === 0) {
+  await page.click('[data-testid="wallet-connect"]');
+  await page.click(`[data-testid="dev-wallet-${WHO}"]`);
+}
+await page.waitForSelector('[data-testid="wallet-button"]');
+await page.waitForTimeout(8000); // books + pool depth polled
+
+async function refs() {
+  const el = page.locator('[data-testid="np-step-2"]');
+  const out = { ref: Number(await el.getAttribute("data-ref")) };
+  for (const s of STRATS) out[s] = Number(await el.getAttribute(`data-ref-${s}`));
+  out.source = await page.locator('[data-testid="np-ref-source"]').innerText();
+  return out;
 }
 
-async function success(page, scope) {
-  const ok = page.locator(`${scope} [data-testid="tx-success"]`).first();
-  const err = page.locator(`${scope} [data-testid="tx-error"]`).first();
-  await Promise.race([
-    ok.waitFor({ timeout: 150000 }),
-    err.waitFor({ timeout: 150000 }).then(async () => {
-      throw new Error("on-screen error: " + (await err.innerText()));
-    }),
-  ]);
-  lastResult = await ok.getAttribute("data-result");
-  return ((await ok.getAttribute("data-hashes")) ?? "").split(",").filter(Boolean);
+async function toStep2(side) {
+  await page.click('[data-testid="np-reset"]');
+  await page.click(`[data-testid="np-side-${side.toLowerCase()}"]`);
+  await page.click('[data-testid="np-continue-1"]');
+  await page.waitForSelector('[data-testid="np-step-2"]');
+  await page.waitForTimeout(1500);
+}
+
+async function toStep3() {
+  await page.fill('[data-testid="np-amount"]', "1");
+  await page.waitForTimeout(600);
+  await page.click('[data-testid="np-continue-2"]');
+  await page.waitForSelector('[data-testid="np-step-3"]');
+  await page.waitForTimeout(1000);
+}
+
+async function crossingCards() {
+  const out = [];
+  for (const s of STRATS) if ((await page.locator(`[data-testid="strategy-${s}-crosses"]`).count()) > 0) out.push(s);
+  return out;
 }
 
 async function flow(name, fn) {
-  if (ONLY && !ONLY.includes(name)) return null;
-  const r = { name, status: "failed", txHashes: [], checks: [] };
-  const page = await ctx.newPage();
+  const r = { name, status: "failed", checks: [] };
   try {
-    await fn(page, r);
+    await fn(r);
     r.status = "passed";
   } catch (e) {
-    r.error = String(e.message ?? e).slice(0, 500);
-    try {
-      await page.screenshot({ path: path.join(shots, `order-${name}-FAILED.png`), fullPage: true });
-    } catch {}
-  } finally {
-    try {
-      if (r.status === "passed") await page.screenshot({ path: path.join(shots, `order-${name}.png`), fullPage: true });
-    } catch {}
-    await page.close();
+    r.error = String(e.message ?? e).slice(0, 400);
+    await page.screenshot({ path: path.join(shots, `order-${name}-FAILED.png`) }).catch(() => {});
+    await page.keyboard.press("Escape").catch(() => {});
   }
-  for (const h of r.txHashes) {
-    const tx = await horizonTx(h);
-    r.checks.push({ hash: h, horizonSuccessful: tx?.successful ?? null, ops: tx?.operation_count ?? null });
-    if (!tx?.successful) {
-      r.status = "failed";
-      r.error = `Horizon says ${h} is not successful`;
-    }
-  }
+  log(name, r.status, r.error ?? "");
   results.push(r);
-  console.log(`${r.status.toUpperCase().padEnd(7)} ${name} ${r.txHashes.map((h) => h.slice(0, 8)).join(",")} ${r.error ?? ""}`);
-  return r;
 }
 
-/** Fill the New order panel. */
-async function fillOrder(page, { side, start, end, venue, yieldOn, amount = AMOUNT }) {
-  await page.waitForSelector('[data-testid="new-order"]', { timeout: 30000 });
-  await page.click(`[data-testid="pool-side"] [data-value="${side}"]`);
-  // range first: the yield toggle depends on it (proximity rule)
-  await page.fill('[data-testid="pool-amount"]', String(amount));
-  await page.fill('[data-testid="pool-start"]', String(start));
-  await page.fill('[data-testid="pool-end"]', String(end));
-  await page.waitForTimeout(500);
-  await page.click(`[data-testid="order-venue"] [data-value="${venue}"]`);
+await flow("ask-preset-no-cross", async (r) => {
+  await toStep2("Ask");
+  const x = await refs();
+  r.checks.push(x);
+  const want = Math.max(...STRATS.map((s) => x[s]));
+  if (!near(x.ref, want)) throw new Error(`ask reference ${x.ref} is not the highest strategy reference ${want}`);
+  await page.click('[data-testid="np-preset-just-above"]');
+  await toStep3();
+  const crossing = await crossingCards();
+  if (crossing.length) throw new Error(`"Just above" crosses on ${crossing.join(",")}`);
+  r.checks.push("no strategy card warns");
+});
+
+await flow("bid-preset-no-cross", async (r) => {
+  await toStep2("Bid");
+  const x = await refs();
+  r.checks.push(x);
+  const want = Math.min(...STRATS.map((s) => x[s]));
+  if (!near(x.ref, want)) throw new Error(`bid reference ${x.ref} is not the lowest strategy reference ${want}`);
+  await page.click('[data-testid="np-preset-just-below"]');
+  await toStep3();
+  const crossing = await crossingCards();
+  if (crossing.length) throw new Error(`"Just below" crosses on ${crossing.join(",")}`);
+  r.checks.push("no strategy card warns");
+});
+
+await flow("direction-rule-clamps", async (r) => {
+  // a sell range cannot start under the price: typing a min 1% under it is clamped, with a note
+  await toStep2("Ask");
+  const x = await refs();
+  await page.fill('[data-testid="np-min"]', (x.ref * 0.99).toFixed(7));
+  await page.press('[data-testid="np-min"]', "Enter");
   await page.waitForTimeout(400);
-  const before = await page.locator('[data-testid="new-order"]').getAttribute("data-pool");
-  await page.click(`[data-testid="order-yield"] [data-value="${yieldOn ? "on" : "off"}"]`);
-  if (venue === "pool") {
-    // the yield toggle switches the pool instance (URL ?pool=): wait for it
-    await page.waitForFunction(
-      ([want]) => document.querySelector('[data-testid="new-order"]')?.getAttribute("data-yield") === want,
-      [yieldOn ? "on" : "off"],
-      { timeout: 15000 },
-    );
-    const after = await page.locator('[data-testid="new-order"]').getAttribute("data-pool");
-    if (before !== after) await page.waitForTimeout(5000); // new instance: depth + config reload
+  const note = await page.locator('[data-testid="np-direction-note"]').innerText().catch(() => "");
+  const min = Number((await page.locator('[data-testid="np-min"]').inputValue()).replace(/,/g, ""));
+  r.checks.push({ ref: x.ref, min, note });
+  if (!note) throw new Error("no direction note");
+  if (min + 1e-4 < x.ref) throw new Error(`min ${min} left under the reference ${x.ref}`);
+  // same for a buy range above the price
+  await toStep2("Bid");
+  const y = await refs();
+  await page.fill('[data-testid="np-max"]', (y.ref * 1.01).toFixed(7));
+  await page.press('[data-testid="np-max"]', "Enter");
+  await page.waitForTimeout(400);
+  const max = Number((await page.locator('[data-testid="np-max"]').inputValue()).replace(/,/g, ""));
+  if (max - 1e-4 > y.ref) throw new Error(`max ${max} left above the reference ${y.ref}`);
+  r.checks.push({ bidRef: y.ref, max });
+});
+
+await flow("pool-crossing-warned", async (r) => {
+  // the pool strategy is checked against its bins AND LBOND/USDC: an ask from the pool price, under the USDC bids
+  const bid = await bestBid(base, quote);
+  await toStep2("Ask");
+  const x = await refs();
+  r.checks.push({ usdcBestBid: bid, poolRef: x.pool });
+  if (bid === null || !(x.pool < bid)) {
+    r.checks.push("pool price is not under the LBOND/USDC bid right now: nothing to cross, check skipped");
+    return;
   }
-  await page.waitForTimeout(800);
-  const no = page.locator('[data-testid="new-order"]');
-  return {
-    pool: await no.getAttribute("data-pool"),
-    venue: await no.getAttribute("data-venue"),
-    yield: await no.getAttribute("data-yield"),
-    summary: await page.locator('[data-testid="order-summary-line"]').innerText().catch(() => ""),
-    signatures: await page.locator('[data-testid="order-signatures"]').innerText().catch(() => ""),
-  };
-}
-
-async function submit(page) {
-  const btn = page.locator('[data-testid="order-submit"]');
-  const label = await btn.innerText();
-  if (await btn.isDisabled()) throw new Error(`submit disabled: "${label}"`);
-  await btn.click();
-  return success(page, '[data-testid="new-order"]');
-}
-
-const BID = { side: "Bid", start: "0.97", end: "0.966" };
-const ASK = { side: "Ask", start: "1.03", end: "1.034" };
-
-const cases = [
-  ["bid-pool-idle", { ...BID, venue: "pool", yieldOn: false }],
-  ["bid-pool-yield", { ...BID, venue: "pool", yieldOn: true }],
-  ["bid-sdex-usdc", { ...BID, venue: "sdex", yieldOn: false }],
-  ["bid-sdex-receipt", { ...BID, venue: "sdex", yieldOn: true }],
-  ["ask-sdex-receipt", { ...ASK, venue: "sdex", yieldOn: true }],
-];
-if (process.env.ASKS === "1")
-  cases.push(
-    ["ask-pool-idle", { ...ASK, venue: "pool", yieldOn: false }],
-    ["ask-pool-yield", { ...ASK, venue: "pool", yieldOn: true }],
-    ["ask-sdex-usdc", { ...ASK, venue: "sdex", yieldOn: false }],
-  );
-
-for (const [name, c] of cases) {
-  await flow(name, async (page, r) => {
-    await connect(page, "/pools?tab=pool");
-    const info = await fillOrder(page, c);
-    r.checks.push(info);
-    if (info.venue !== c.venue || info.yield !== (c.yieldOn ? "on" : "off")) throw new Error(`destination not set: ${JSON.stringify(info)}`);
-    const expectSigs = c.venue === "sdex" && c.yieldOn && c.side === "Bid" ? "2" : "1";
-    if (info.signatures !== expectSigs) throw new Error(`expected ${expectSigs} signatures, UI says ${info.signatures}`);
-    r.txHashes.push(...(await submit(page)));
-    if (c.venue === "pool") {
-      const id = Number(lastResult);
-      if (!Number.isFinite(id)) throw new Error(`no position id (${lastResult})`);
-      created.positions.push({ pool: info.pool, id });
-      r.checks.push({ positionId: id });
-    }
-    if (c.venue === "sdex" && c.yieldOn && c.side === "Bid") {
-      if (r.txHashes.length !== 2) throw new Error(`expected 2 transactions, got ${r.txHashes.length}`);
-      created.deposits.push(AMOUNT);
-    }
-  });
-}
-
-// proximity rule: Bid + Pool with the top bin right under the reference price -> yield On disabled
-await flow("proximity-guard-ui", async (page, r) => {
-  await connect(page, "/pools?tab=pool");
-  await page.click('[data-testid="pool-side"] [data-value="Bid"]');
-  await page.click('[data-testid="order-venue"] [data-value="pool"]');
-  await page.click('[data-testid="order-yield"] [data-value="off"]');
-  await page.waitForTimeout(3000);
-  await page.fill('[data-testid="pool-amount"]', "5");
-  // default bid range starts just under the reference price
-  await page.click('[data-testid="new-order"] button:has-text("Reset")');
-  await page.waitForTimeout(800);
-  const on = page.locator('[data-testid="order-yield"] [data-value="on"]');
-  const disabledNear = await on.isDisabled();
-  const note = await page.locator('[data-testid="order-proximity"]').innerText().catch(() => "");
-  // far enough below: enabled again
-  await page.fill('[data-testid="pool-start"]', "0.97");
-  await page.fill('[data-testid="pool-end"]', "0.96");
-  await page.waitForTimeout(800);
-  const disabledFar = await on.isDisabled();
-  // SDEX is never blocked
-  await page.fill('[data-testid="pool-start"]', "0.989");
-  await page.click('[data-testid="order-venue"] [data-value="sdex"]');
+  await toStep3();
+  await page.click('[data-testid="strategy-pool"]');
+  await page.click('[data-testid="np-edit"]');
+  await page.waitForSelector('[data-testid="np-step-2"]');
+  await page.fill('[data-testid="np-min"]', x.pool.toFixed(7));
+  await page.press('[data-testid="np-min"]', "Enter");
+  await page.fill('[data-testid="np-max"]', (x.pool * 1.004).toFixed(7));
+  await page.press('[data-testid="np-max"]', "Enter");
   await page.waitForTimeout(500);
-  const disabledSdex = await on.isDisabled();
-  r.checks.push({ disabledNear, note: note.slice(0, 160), disabledFar, disabledSdex });
-  if (!disabledNear || disabledFar || disabledSdex) throw new Error(JSON.stringify(r.checks));
+  await toStep3();
+  const crossing = await crossingCards();
+  r.checks.push({ crossing });
+  if (!crossing.includes("pool")) throw new Error(`pool card does not warn (crossing: ${crossing.join(",")})`);
+  await page.click('[data-testid="strategy-pool"]');
+  await page.click('[data-testid="np-review"]');
+  await page.waitForSelector('[data-testid="review-dialog"]');
+  const warn = await page.locator('[data-testid="order-crosses"]').innerText().catch(() => "");
+  if (!warn) throw new Error("review modal does not warn");
+  r.checks.push(warn.slice(0, 200));
+  await page.screenshot({ path: path.join(shots, "order-review-crosses.png") });
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
 });
 
-// portfolio: pool positions per instance + SDEX offers in USDC and in the receipt
-await flow("portfolio-lists-all-kinds", async (page, r) => {
-  await connect(page, "/portfolio");
-  await page.waitForTimeout(6000);
-  const text = await page.locator('[data-testid="portfolio"]').innerText();
-  const offerMarkets = await page.locator('[data-testid="offer-row"] td:nth-child(2)').allInnerTexts();
-  const posRows = await page.locator('[data-testid="pool-position-row"]').count();
-  r.checks.push({ offerMarkets: [...new Set(offerMarkets.map((t) => t.split("\n")[0].trim()))], posRows, links: await page.locator('[data-testid="portfolio"] a[href*="stellar.expert"]').count() });
-  if (!offerMarkets.some((t) => t.startsWith("LBOND/USDC"))) throw new Error("no LBOND/USDC offer listed");
-  if (!offerMarkets.some((t) => /LBOND\/lUSDC/.test(t))) throw new Error("no LBOND/receipt offer listed");
-  if (posRows < created.positions.length) throw new Error(`only ${posRows} pool position rows`);
-  if (!/LBOND \/ USDC \(USDC in DeFindex/.test(text) || !/LBOND \/ USDC \(idle USDC\)/.test(text)) throw new Error("pool instances not both shown");
+await flow("reference-follows-strategy", async (r) => {
+  await toStep2("Ask");
+  await page.click('[data-testid="np-preset-just-above"]');
+  await toStep3();
+  await page.click('[data-testid="strategy-sdex"]');
+  await page.click('[data-testid="np-edit"]');
+  await page.waitForSelector('[data-testid="np-step-2"]');
+  const x = await refs();
+  r.checks.push(x);
+  if (!near(x.ref, x.sdex)) throw new Error(`range step reference ${x.ref} is not the Stellar DEX one ${x.sdex}`);
+  if (!/book of your strategy/.test(x.source)) throw new Error(`source label: ${x.source}`);
+  await page.click('[data-testid="np-reset"]');
 });
 
-if (process.env.NO_CLEANUP !== "1") {
-  await flow("cleanup-cancel-offers", async (page, r) => {
-    await connect(page, "/portfolio");
-    await page.waitForSelector('[data-testid="offer-row"]', { timeout: 20000 });
-    const n = await page.locator('[data-testid="offer-row"]').count();
-    if (n > 1) {
-      await page.click('[data-testid="offers-cancel-all"]');
-      await page.click('[data-testid="offers-cancel-all-confirm"]');
-    } else await page.click('[data-testid="offer-cancel"]');
-    r.txHashes.push(...(await success(page, '[data-testid="portfolio-offers"]')));
-    r.checks.push({ cancelled: n });
-  });
-  for (const p of created.positions) {
-    await flow(`cleanup-remove-${p.pool}-${p.id}`, async (page, r) => {
-      await connect(page, `/pools?tab=pool&pool=${p.pool}`);
-      await page.waitForSelector(`[data-testid="pool-remove-${p.id}"]`, { timeout: 30000 });
-      await page.click(`[data-testid="pool-remove-${p.id}"]`);
-      r.txHashes.push(...(await success(page, '[data-testid="pool-tab"]')));
-    });
-  }
-  if (created.deposits.length > 0) {
-    await flow("cleanup-redeem-receipt", async (page, r) => {
-      await connect(page, "/pools?tab=vault");
-      const total = created.deposits.reduce((a, b) => a + Number(b), 0);
-      const card = page.locator('[data-testid="vault-redeem-submit"]').first();
-      await page.locator('[data-testid="vault-tab-redeem"]').first().click();
-      await page.locator('[data-testid="vault-redeem-amount"]').first().fill(String(total));
-      await page.waitForTimeout(500);
-      await card.click();
-      r.txHashes.push(...(await success(page, "")));
-    });
-  }
-}
-
+const out = { at: new Date().toISOString(), base: BASE_URL, who: WHO, results, consoleErrors };
+fs.writeFileSync(path.join(resultsDir, "order-flows.json"), JSON.stringify(out, null, 2));
+log(`passed ${results.filter((r) => r.status === "passed").length}/${results.length}; console errors ${consoleErrors.length}`);
+if (consoleErrors.length) console.log(consoleErrors.slice(0, 10).join("\n"));
 await browser.close();
-const out = path.join(resultsDir, `order-flows-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-fs.writeFileSync(out, JSON.stringify({ baseUrl: BASE_URL, who: WHO, created, results }, null, 2));
-console.log(`\nresults: ${out}`);
-console.table(results.map((r) => ({ flow: r.name, status: r.status, tx: r.txHashes.map((h) => h.slice(0, 10)).join(","), error: (r.error ?? "").slice(0, 80) })));
 process.exit(results.every((r) => r.status === "passed") ? 0 : 1);

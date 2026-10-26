@@ -21,8 +21,8 @@ import { Segmented, TokenIcon } from "@/components/common";
 import { useConfig, useNet } from "@/lib/config-context";
 import type { PoolInstance } from "@/lib/config-types";
 import { usePolling } from "@/lib/hooks";
-import { midPrice } from "@/lib/book";
-import { PROXIMITY_MIN_BINS, binsBelowReference, pickReference } from "@/lib/orderRoute";
+import { bestPrices } from "@/lib/book";
+import { PROXIMITY_MIN_BINS, binsBelowReference, conservativeReference, directionBounds, rangeForYield, referenceFor, type BookTop } from "@/lib/orderRoute";
 import { getPoolClient } from "@/lib/pool";
 import { MAX_BIN, MAX_POSITION_BINS, MIN_BIN, binForPrice, planPosition, priceAt, type Shape, type Side } from "@/lib/poolGrid";
 import { assetReady, fetchCandles, fetchOrderBook, fmt, type AssetRef } from "@/lib/stellar";
@@ -32,7 +32,7 @@ import { LiquidityRangeChart, type DepthBin } from "./LiquidityRangeChart";
 import { ReviewDialog } from "./ReviewDialog";
 import { StrategyCards } from "./StrategyCards";
 import type { LiveApr } from "./useBlendApr";
-import { directionalPools, useOrderDestinations, type StrategyId } from "./useOrder";
+import { STRATEGIES, crossText, directionalPools, useOrderDestinations, type StrategyId } from "./useOrder";
 
 const TIMEFRAMES = [
   { label: "1H", res: 60_000, limit: 60 },
@@ -47,7 +47,11 @@ const SHAPES: { value: Shape; label: string; title: string }[] = [
   { value: "end", label: "Back", title: "Heavier toward the end of the range" },
 ];
 
-/** Range presets, as % from the reference price (lotus-main "Strategies" grid; renamed: strategy is step 3 here). */
+/**
+ * Range presets, as % from the reference price (lotus-main "Strategies" grid; renamed: strategy is step 3 here).
+ * The reference is the chosen strategy's own book (lib/orderRoute.ts referenceFor); before a strategy is chosen,
+ * the most conservative of the four, so a preset crosses no venue (step 3 re-checks crossing per strategy anyway).
+ */
 const PRESETS: Record<Side, { name: string; sub: string; lo: number; hi: number; hint: string }[]> = {
   Ask: [
     { name: "Just above", sub: "+0.1% → +1%", lo: 0.1, hi: 1, hint: "First fills soon" },
@@ -56,7 +60,7 @@ const PRESETS: Record<Side, { name: string; sub: string; lo: number; hi: number;
     { name: "Wide", sub: "+0.1% → +6%", lo: 0.1, hi: 6, hint: "Up to 60 bins" },
   ],
   Bid: [
-    { name: "Just below", sub: "-1% → -0.1%", lo: -1, hi: -0.1, hint: "No pool yield (< 1%)" },
+    { name: "Just below", sub: "-1% → -0.1%", lo: -1, hi: -0.1, hint: "Pool yield needs 1% under the pool price" },
     { name: "Buy the dip", sub: "-3% → -1.1%", lo: -3, hi: -1.1, hint: "Every strategy open" },
     { name: "Ladder", sub: "-3.5% → -1.5%", lo: -3.5, hi: -1.5, hint: "Even steps down" },
     { name: "Wide", sub: "-6% → -1.1%", lo: -6, hi: -1.1, hint: "Up to 50 bins" },
@@ -107,6 +111,7 @@ export function NewPosition({
   const [tf, setTf] = useState(1);
   const [choice, setChoice] = useState<StrategyId | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [clampNote, setClampNote] = useState<string | null>(null);
 
   // ---- live data: pool depth (every live instance), SDEX books, candles -------------------------------------------
   const depthPools = useMemo(() => pools.filter((p) => p.status !== "retired" && p.status !== "coming-soon"), [pools]);
@@ -141,14 +146,33 @@ export function NewPosition({
   }, [config.horizon, base, quote, receipt, t.res, t.limit]);
   const candlesQ = usePolling(candlesFn, 30000, true);
 
-  // pool mid from the idle instance's best bins
-  const poolMid = useMemo(() => {
-    const d = depthQ.data?.find((x) => x.inst.id === main.id);
-    const a = d?.asks[0] ? Number(d.asks[0].price) / 1e7 : null;
-    const b = d?.bids.length ? Number(d.bids[d.bids.length - 1].price) / 1e7 : null;
-    return a !== null && b !== null ? (a + b) / 2 : (a ?? b);
-  }, [depthQ.data, main.id]);
-  const ref = pickReference({ receiptMid: midPrice(booksQ.data?.receipt ?? null), usdcMid: midPrice(booksQ.data?.usdc ?? null), poolMid });
+  // best bid / ask of every book a strategy can target: each pool instance's own bins, SDEX USDC and receipt books
+  const market = useMemo(() => {
+    const poolTop = (inst: PoolInstance | null): BookTop => {
+      const d = inst ? depthQ.data?.find((x) => x.inst.id === inst.id) : undefined;
+      return {
+        ask: d?.asks[0] ? Number(d.asks[0].price) / 1e7 : null,
+        bid: d?.bids.length ? Number(d.bids[d.bids.length - 1].price) / 1e7 : null,
+      };
+    };
+    return {
+      usdc: bestPrices(booksQ.data?.usdc ?? null),
+      receipt: bestPrices(booksQ.data?.receipt ?? null),
+      pool: { idle: poolTop(idle), vaulted: poolTop(vaulted) },
+    };
+  }, [depthQ.data, booksQ.data, idle, vaulted]);
+  // reference price per strategy (its own book), and the one the range step uses: the chosen strategy's, or before a
+  // strategy is chosen the most conservative one, so presets cross no venue (lib/orderRoute.ts referenceFor)
+  const refs = useMemo(() => {
+    const out = {} as Record<StrategyId, { price: number; source: string }>;
+    for (const st of STRATEGIES) {
+      const pool = st.yieldOn ? market.pool.vaulted : market.pool.idle;
+      out[st.id] = referenceFor(st.venue, st.yieldOn, { usdc: market.usdc, receipt: market.receipt, pool });
+    }
+    return out;
+  }, [market]);
+  const ref = choice ? refs[choice] : conservativeReference(side, STRATEGIES.map((st) => refs[st.id]));
+  const refLabel = choice ? `${ref.source}, the book of your strategy` : `${ref.source}, ${side === "Ask" ? "highest" : "lowest"} across strategies`;
   const refPrice = ref.price;
 
   const eff: Range = range ?? defaultRange(side, refPrice, step);
@@ -172,9 +196,8 @@ export function NewPosition({
     side,
     plan,
     amountTyped,
-    refPrice,
     stepBps: step,
-    books: { usdc: booksQ.data?.usdc ?? null, receipt: booksQ.data?.receipt ?? null },
+    market,
     connected: !!wallet.address,
   });
 
@@ -215,10 +238,25 @@ export function NewPosition({
   }, [depthBins, eff.lo, eff.hi]);
 
   // ---- actions ----------------------------------------------------------------------------------------------------
+  // direction rule (lib/orderRoute.ts directionBounds): a sell range sits at or above the price, a buy range at or
+  // below it; handles, fields, steppers and presets are clamped to that bound, with a short note
   const setLoHi = (lo: number, hi: number) => {
-    const a = snap(Math.max(1e-7, lo), step);
-    const b = snap(Math.max(1e-7, hi), step);
-    setRange({ lo: Math.min(a, b), hi: Math.max(a, b) });
+    let a = binForPrice(Math.max(1e-7, Math.min(lo, hi)), step);
+    let b = binForPrice(Math.max(1e-7, Math.max(lo, hi)), step);
+    const { minBin, maxBin } = directionBounds(side, step, refPrice);
+    let clamped = false;
+    if (side === "Ask" && a < minBin) {
+      a = minBin;
+      b = Math.max(b, minBin);
+      clamped = true;
+    }
+    if (side === "Bid" && b > maxBin) {
+      b = maxBin;
+      a = Math.min(a, maxBin);
+      clamped = true;
+    }
+    setClampNote(clamped ? (side === "Ask" ? "A sell range starts at or above the current price" : "A buy range ends at or below the current price") : null);
+    setRange({ lo: Number(priceAt(a, step)) / 1e7, hi: Number(priceAt(b, step)) / 1e7 });
   };
   const stepBin = (which: "lo" | "hi", dir: 1 | -1) => {
     const v = which === "lo" ? eff.lo : eff.hi;
@@ -227,7 +265,14 @@ export function NewPosition({
     else setLoHi(eff.lo, Math.max(next, eff.lo));
   };
   const preset = (p: (typeof PRESETS)[Side][number]) => setLoHi(refPrice * (1 + p.lo / 100), refPrice * (1 + p.hi / 100));
+  // "Change range" of the curator rule: top bin = pool + yield reference bin - PROXIMITY_MIN_BINS, same width
+  const rangeToYield = () => {
+    const r = rangeForYield(binForPrice(eff.lo, step), binForPrice(eff.hi, step), step, refs["pool-yield"].price);
+    setClampNote(null);
+    setRange({ lo: Number(priceAt(r.loBin, step)) / 1e7, hi: Number(priceAt(r.hiBin, step)) / 1e7 });
+  };
   const resetAll = () => {
+    setClampNote(null);
     setWizard(1);
     setRange(null);
     setAmount("");
@@ -238,6 +283,7 @@ export function NewPosition({
     if (s !== side) {
       setSide(s);
       setRange(null);
+      setClampNote(null);
       setAmount("");
       setChoice(null);
     }
@@ -390,7 +436,15 @@ export function NewPosition({
                 </Button>
               </div>
             ) : wizard === 2 ? (
-              <div className="space-y-5" data-testid="np-step-2">
+              <div
+                className="space-y-5"
+                data-testid="np-step-2"
+                data-ref={refPrice}
+                data-ref-pool={refs.pool.price}
+                data-ref-pool-yield={refs["pool-yield"].price}
+                data-ref-sdex={refs.sdex.price}
+                data-ref-sdex-yield={refs["sdex-yield"].price}
+              >
                 <div>
                   <h2 className="text-lg font-semibold">Set price range</h2>
                   <p className="mt-1 text-sm text-mutedfg">
@@ -405,7 +459,9 @@ export function NewPosition({
                     <span className="font-semibold tabular-nums" data-testid="np-ref-price">
                       {fmt(refPrice, 4, 4)} {quote.code}/{base.code}
                     </span>
-                    <span className="ml-1.5 text-[11px] text-mutedfg">({ref.source})</span>
+                    <span className="ml-1.5 text-[11px] text-mutedfg" data-testid="np-ref-source">
+                      ({refLabel})
+                    </span>
                   </span>
                   <span className="flex items-center gap-1.5">
                     {inRangeShare !== null ? (
@@ -419,7 +475,7 @@ export function NewPosition({
                   </span>
                 </div>
 
-                <LiquidityRangeChart line={candlesQ.data?.closes ?? []} depth={depthBins} min={eff.lo} max={eff.hi} current={refPrice} stepBps={step} onChange={setLoHi} />
+                <LiquidityRangeChart line={candlesQ.data?.closes ?? []} depth={depthBins} min={eff.lo} max={eff.hi} current={refPrice} stepBps={step} onChange={setLoHi} unit={base.code} />
 
                 <div className="flex flex-wrap items-center gap-1">
                   {TIMEFRAMES.map((x, i) => (
@@ -474,8 +530,18 @@ export function NewPosition({
                 </div>
                 <p className="-mt-2 text-[11px] text-mutedfg" data-testid="np-bins">
                   {binsCount} bin{binsCount === 1 ? "" : "s"} · {side === "Ask" ? `sells from ${fmt(eff.lo, 4, 4)} up to ${fmt(eff.hi, 4, 4)}` : `buys from ${fmt(eff.hi, 4, 4)} down to ${fmt(eff.lo, 4, 4)}`}
-                  {side === "Bid" ? ` · top bin ${fmt(Math.max(0, binsBelowReference(binForPrice(eff.hi, step), step, refPrice)), 1)} bins under the price (Blend yield in the pool needs ${PROXIMITY_MIN_BINS})` : ""}
+                  {side === "Bid" ? ` · top bin ${fmt(Math.max(0, binsBelowReference(binForPrice(eff.hi, step), step, refs["pool-yield"].price)), 1)} bins under the price (Blend yield in the pool needs ${PROXIMITY_MIN_BINS})` : ""}
                 </p>
+                {clampNote ? (
+                  <p className="text-[11px] text-primary" data-testid="np-direction-note">
+                    {clampNote} ({fmt(refPrice, 4, 4)}).
+                  </p>
+                ) : null}
+                {chosen && chosen.crossing > 0 && plan.ok ? (
+                  <p className="rounded-lg border border-red/40 bg-red/5 px-2.5 py-2 text-[11px] text-red" data-testid="np-crosses">
+                    {crossText(chosen, side, base.code, quote.code, receipt.code, plan.bins.length)}
+                  </p>
+                ) : null}
 
                 <div>
                   <div className="mb-2 flex items-center justify-between text-sm font-medium">
@@ -517,7 +583,12 @@ export function NewPosition({
                   </div>
                 </div>
 
-                <Button className="w-full" size="lg" disabled={!plan.ok || !amountTyped} onClick={() => setWizard(3)} data-testid="np-continue-2">
+                <Button className="w-full" size="lg" disabled={!plan.ok || !amountTyped} onClick={() => {
+                    // freeze the default range: choosing a strategy changes the reference, it must not move the order
+                    if (!range) setRange(eff);
+                    setWizard(3);
+                  }}
+                  data-testid="np-continue-2">
                   {!amountTyped ? "Enter an amount" : !plan.ok ? (plan.errors[0] ?? "Invalid range") : "Continue"}
                 </Button>
               </div>
@@ -548,10 +619,9 @@ export function NewPosition({
                   receipt={receipt}
                   bins={plan.ok ? plan.bins.length : 0}
                   apr={apr}
-                  refPrice={refPrice}
-                  refSource={ref.source}
                   selected={choice}
                   onSelect={setChoice}
+                  onChangeRange={rangeToYield}
                 />
                 <Button
                   className="w-full"
@@ -576,8 +646,6 @@ export function NewPosition({
           env={env}
           plan={plan}
           side={side}
-          refPrice={refPrice}
-          refSource={ref.source}
           aprText={aprText}
           onDone={() => {
             onCreated();

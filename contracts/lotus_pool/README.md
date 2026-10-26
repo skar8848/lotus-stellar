@@ -127,7 +127,7 @@ DeFindex `get_asset_amounts_per_shares` updates a fee report inside the vault. F
 Requirements: Rust >= 1.84 with `wasm32v1-none`, `stellar` CLI 28.x.
 
 ```sh
-cargo test -p lotus_pool                  # 58 host tests (about 4 minutes, the random walks dominate); `-- --ignored` adds a deeper fuzz run
+cargo test -p lotus_pool                  # 60 host tests (about 4 minutes, the random walks dominate); `-- --ignored` adds a deeper fuzz run
 cargo test                                # whole workspace
 stellar contract build --package lotus_pool
 stellar contract optimize --wasm target/wasm32v1-none/release/lotus_pool.wasm

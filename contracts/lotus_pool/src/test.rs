@@ -959,6 +959,113 @@ fn bid_leaves_no_unfillable_dust_in_the_book() {
     assert!(swept_cases > 0, "the sweep path must be exercised");
 }
 
+/// One of two LPs leaves a set of nearly filled Bid bins. Before the fix the
+/// few stroops left behind (the remaining LP's share, which the leaver's
+/// floor rounding hands it) could not be filled by any sell but still counted
+/// against `max_bins_per_swap`, so they blocked every sell behind them, and
+/// they made new deposits into those bins fail with `BinDust`. Now the
+/// remainder is folded into the remaining LPs' fees and the bin leaves the book.
+fn bid_removal_dust_case(with_vault: bool) {
+    // 100 bps grid: bins 190..194 price BASE at ~6.6..6.9 QUOTE, so fewer than
+    // ~6 stroops of QUOTE cannot buy one stroop of BASE
+    let f = setup_with(100, 10, with_vault);
+    if with_vault {
+        seed_vault(&f, 1_000 * ONE);
+    }
+    let (a, b, c, taker) = (f.user(), f.user(), f.user(), f.user());
+    f.fund_base(&taker, 1_000 * ONE);
+    let bins: StdVec<i32> = (190..195).collect();
+    let mut ids_a = StdVec::new();
+    let mut ids_b = StdVec::new();
+    // built upwards so each sell only touches the newest (highest) bin
+    for &bin in &bins {
+        ids_a.push(f.bid(&a, bin, bin, 10 * ONE));
+        ids_b.push(f.bid(&b, bin, bin, 10 * ONE));
+        let inv = f.c.get_bin(&Side::Bid, &bin).inventory;
+        let p = f.price(bin);
+        // sell one stroop of BASE less than the bin can absorb: a fillable remainder stays
+        let x_cap = inv * ONE / p;
+        f.c.swap(&taker, &false, &(x_cap - 1), &0);
+        assert!(f.active(Side::Bid).contains(bin), "bin {} still fillable", bin);
+        let r = f.bin_rec(Side::Bid, bin).inventory;
+        assert!(r > 0 && r < MIN_BIN_DEPOSIT, "bin {}: remainder {}", bin, r);
+    }
+    // deep liquidity below the dust bins
+    let id_c = f.bid(&c, 0, 0, 100 * ONE);
+
+    // what A's removal leaves behind in each bin (units; 1:1 with QUOTE here)
+    let mut folded = 0i128;
+    for (i, &bin) in bins.iter().enumerate() {
+        let r = f.bin_rec(Side::Bid, bin).inventory;
+        let pa = f.c.get_position(&ids_a[i]);
+        folded += r - pa.inventory;
+    }
+    let fees_b_before: i128 = ids_b.iter().map(|id| f.c.get_position(id).pending_fees).sum();
+    for id in &ids_a {
+        f.c.remove_position(&a, id);
+    }
+
+    // no Bid bin keeps 0 < inventory < MIN_BIN_DEPOSIT
+    for &bin in &bins {
+        let inv = f.bin_rec(Side::Bid, bin).inventory;
+        assert!(
+            inv == 0 || inv >= MIN_BIN_DEPOSIT,
+            "bin {}: dust {} left in the book",
+            bin,
+            inv
+        );
+        assert!(!f.active(Side::Bid).contains(bin), "bin {} still active", bin);
+    }
+    // the remaining LP got the remainder as fees (minus accumulator rounding)
+    let fees_b_after: i128 = ids_b.iter().map(|id| f.c.get_position(id).pending_fees).sum();
+    let gained = fees_b_after - fees_b_before;
+    assert!(
+        gained <= folded && gained >= folded - bins.len() as i128,
+        "fees gained {} for {} folded",
+        gained,
+        folded
+    );
+    for id in &ids_b {
+        assert_eq!(f.c.get_position(id).inventory, 0);
+    }
+
+    // a sell across the range reaches the deep bin even with a tight bin budget
+    f.c.set_max_bins_per_swap(&(bins.len() as u32));
+    let out = f.c.swap(&taker, &false, &ONE, &1);
+    assert!(out > 0);
+    // and a new deposit into a former dust bin starts a fresh generation (no BinDust)
+    let d = f.user();
+    let id_d = f.bid(&d, 192, 192, 10 * ONE);
+    assert_eq!(f.bin_rec(Side::Bid, 192).gen, 1);
+    assert_eq!(f.c.get_position(&id_d).inventory, 10 * ONE);
+
+    // B's removal pays inventory + fees; nothing is over-paid
+    let mut paid_b = 0i128;
+    for (i, id) in ids_b.iter().enumerate() {
+        let view = f.c.get_position(id);
+        let r = f.c.remove_position(&b, id);
+        assert_eq!(r.quote, view.inventory + view.pending_fees, "bin {}", bins[i]);
+        paid_b += r.quote;
+    }
+    assert!(paid_b >= fees_b_after);
+    f.c.remove_position(&c, &id_c);
+    f.c.remove_position(&d, &id_d);
+    // at most ~1 stroop per bin (plus fee rounding) stays in the pool
+    let left = if with_vault { f.qs() } else { f.bal_quote(&f.pool) };
+    assert!(left >= 0 && left <= 2 * (bins.len() as i128 + 2), "pool keeps {}", left);
+    assert!(f.active(Side::Bid).is_empty());
+}
+
+#[test]
+fn bid_removal_leaves_no_unfillable_dust() {
+    bid_removal_dust_case(false);
+}
+
+#[test]
+fn vault_bid_removal_leaves_no_unfillable_dust() {
+    bid_removal_dust_case(true);
+}
+
 #[test]
 fn claim_and_remove_require_the_owner() {
     let f = setup();

@@ -1333,6 +1333,20 @@ impl LotusPool {
             if e.gen == rec.gen {
                 rec.inventory -= inv;
                 rec.total_shares -= e.shares;
+                // the leaver's share is rounded down, so a Bid bin can keep a few
+                // stroops that no sell can fill but that still count against
+                // `max_bins_per_swap` (and make new deposits fail with BinDust):
+                // credit them to the remaining LPs as fee, exactly as the fill sweep
+                // does (units, per share scaled by ACC_SCALE, floor), and let the bin
+                // leave the book (its next deposit starts a new generation)
+                if pos.side == Side::Bid
+                    && rec.total_shares > 0
+                    && rec.inventory > 0
+                    && rec.inventory < MIN_BIN_DEPOSIT
+                {
+                    rec.acc_f += mul_div(&env, rec.inventory, ACC_SCALE, rec.total_shares, false);
+                    rec.inventory = 0;
+                }
                 write_bin(&env, pos.side, e.bin, &rec);
                 if rec.inventory == 0 {
                     set.remove(e.bin);

@@ -121,10 +121,24 @@ export default function Landing() {
       <section id="about" className="scroll-mt-24 border-t border-white/[0.06] px-4 py-20 sm:px-10 lg:py-24">
         <div className="mx-auto max-w-3xl text-center">
           <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">About me</span>
-          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-3xl sm:text-4xl">Alban</h2>
-          <div className="mt-6 flex flex-col items-center gap-2 text-[15px] text-white/55 sm:text-base">
-            <p>VP DeVinci Blockchain</p>
-            <p>Data &amp; Research @ KPK</p>
+          <div className="mt-10 flex flex-col items-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/team/alban.jpeg" alt="Alban" className="h-40 w-40 rounded-full border border-white/10 object-cover sm:h-44 sm:w-44" />
+            <h2 className="mt-7 font-[family-name:var(--font-audiowide)] text-3xl sm:text-4xl">Alban</h2>
+            <div className="mt-4 flex flex-col items-center gap-1.5 text-lg leading-relaxed text-white/60">
+              <p>VP DeVinci Blockchain</p>
+              <p>Data &amp; Research @ KPK</p>
+            </div>
+            <a
+              href="https://x.com/0xhaizeka"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Alban on X"
+              className="mt-5 inline-flex transition-opacity hover:opacity-70"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/team/x.jpg" alt="X" className="h-7 w-7 rounded-md" />
+            </a>
           </div>
         </div>
       </section>

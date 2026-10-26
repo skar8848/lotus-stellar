@@ -12,7 +12,11 @@ function Node({ x, y, w, h = 60, title, sub, logo, accent }: NodeProps) {
   const L = 26;
   // several logos overlap like a token pair
   const logos = logo ? [logo].flat() : [];
-  const tx = logos.length ? x + 16 + L + (logos.length - 1) * 20 + 10 : x + w / 2;
+  // logo(s) + text are centred as one group in the box (text width estimated from the font sizes)
+  const logoW = logos.length ? L + (logos.length - 1) * 20 + 10 : 0;
+  const textW = Math.max(title.length * 16 * 0.56, sub.length * 12 * 0.52);
+  const left = x + Math.max(14, (w - logoW - textW) / 2);
+  const tx = logos.length ? left + logoW : x + w / 2;
   const anchor = logos.length ? "start" : "middle";
   return (
     <g>
@@ -27,7 +31,7 @@ function Node({ x, y, w, h = 60, title, sub, logo, accent }: NodeProps) {
         strokeWidth={accent ? 1.5 : 1}
       />
       {logos.map((src, i) => (
-        <image key={src} href={src} x={x + 16 + i * 20} y={y + (h - L) / 2} width={L} height={L} />
+        <image key={src} href={src} x={left + i * 20} y={y + (h - L) / 2} width={L} height={L} />
       ))}
       <text x={tx} y={y + h / 2 - 2} textAnchor={anchor} fill="#e8eef4" fontSize={16} fontWeight={500} fontFamily={FONT}>
         {title}

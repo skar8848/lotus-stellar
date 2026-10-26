@@ -2,6 +2,8 @@
 
 Directional liquidity and yield-bearing orders for Stellar.
 
+**Live app (Stellar testnet): https://lotus-stellar.vercel.app**
+
 Lotus is two products that work together:
 
 1. **The Lotus pool** (`lotus_pool`, Soroban): a range pool on a grid of price bins where a liquidity provider chooses a direction. A directional position only sells its inventory and only receives proceeds; nothing trades back. The quote leg can optionally sit in a DeFindex vault that lends on Blend, so resting liquidity earns while it waits and is recalled just in time by the taker's own swap.

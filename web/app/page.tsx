@@ -21,10 +21,6 @@ const steps = ({ r, base, quote }: Codes) => [
     title: "Earn yield, or not",
     body: `With yield on, the ${quote} leg goes through DeFindex into Blend: on the pool through the vault-backed instance, on the SDEX by quoting in ${r}, minted 1:1 by the Lotus vault and still earning inside open offers.`,
   },
-  {
-    title: "Takers fill it",
-    body: `Takers swap on the Lotus pool, or trade and path-pay on the SDEX. A bot-run arbitrage keeps the two prices aligned, and ${r} redeems 1:1 for ${quote}.`,
-  },
 ];
 
 const why = ({ r, base, quote }: Codes) => [
@@ -92,13 +88,16 @@ export default function Landing() {
           {/* left: copy */}
           <div className="relative z-10 flex flex-col justify-center px-4 pb-12 pt-28 sm:px-10 lg:pb-0 lg:pl-16 lg:pr-10 lg:pt-0">
             <h1 className="font-[family-name:var(--font-audiowide)] text-5xl leading-[1.05] tracking-tight sm:text-6xl">Lotus</h1>
-            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">Liquidity that earns while it waits.</p>
+            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">
+              Liquidity that{" "}
+              <span className="underline decoration-[#F3B1CE] decoration-2 underline-offset-[6px]">earns while it waits</span>.
+            </p>
             <p className="mt-5 max-w-md text-[15px] leading-relaxed text-white/55 sm:text-base">
               Resting liquidity sits idle, and market makers are rarely paid enough to provide it. Lotus is a new kind of pool
               built for them: post directional range orders, let the idle side earn through DeFindex strategies designed for resting
-              liquidity (lending on Blend), and keep trading on the Stellar DEX while your portfolio works.
+              liquidity, and keep trading on the Stellar DEX while your portfolio works.
             </p>
-            <div className="mt-10 flex w-fit flex-col items-center gap-3 sm:mt-14">
+            <div className="mt-14 flex w-fit flex-col items-center gap-3 sm:mt-20">
               <Link
                 href="/swap"
                 className="group inline-flex items-center gap-2.5 rounded-full bg-white px-8 py-4 text-lg font-medium text-black transition-transform hover:scale-[1.02]"
@@ -126,19 +125,19 @@ export default function Landing() {
       <section id="how" className="scroll-mt-24 border-t border-white/[0.06] px-4 py-20 sm:px-10 lg:py-28">
         <div className="mx-auto max-w-3xl text-center">
           <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">How it works</span>
-          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">One order. Four places to wait.</h2>
+          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">One order. Two places to wait.</h2>
         </div>
 
         <div className="mx-auto mt-12 max-w-4xl">
           <HowDiagram receipt={receipt} base={codes.base} quote={codes.quote} />
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs leading-relaxed text-white/35">
             {liveYield
-              ? `* Yield is real Blend testnet interest, through our DeFindex vault. The rate follows Blend's testnet utilization: observed, not a forecast. Stellar testnet only.`
-              : "* Blend lending applies when the strategy allocates to it. The active testnet vault keeps its funds idle in DeFindex, so no lending interest is assumed. Stellar testnet only."}
+              ? `Yield is real Blend testnet interest, through our DeFindex vault. The rate follows Blend's testnet utilization: observed, not a forecast. Stellar testnet only.`
+              : "Blend lending applies when the strategy allocates to it. The active testnet vault keeps its funds idle in DeFindex, so no lending interest is assumed. Stellar testnet only."}
           </p>
         </div>
 
-        <div className="mx-auto mt-16 grid max-w-5xl grid-cols-1 gap-y-12 text-center sm:grid-cols-2 sm:gap-x-12 lg:grid-cols-4 lg:gap-x-10">
+        <div className="mx-auto mt-16 grid max-w-4xl grid-cols-1 gap-y-12 text-center sm:grid-cols-3 sm:gap-x-10">
           {STEPS.map((s, i) => (
             <div key={s.title} className="flex flex-col items-center">
               <span className="font-[family-name:var(--font-audiowide)] text-sm text-white/30">0{i + 1}</span>

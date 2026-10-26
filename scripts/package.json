@@ -21,7 +21,10 @@
     "bot:depeg": "node bot/index.mjs --scenario depeg",
     "bot:demo": "node bot/index.mjs --scenario demo",
     "bot:cross": "node bot/index.mjs --scenario cross-venue",
-    "bot:keeper": "node bot/index.mjs --scenario keeper"
+    "bot:keeper": "node bot/index.mjs --scenario keeper",
+    "bot:live": "node bot/live.mjs",
+    "bot:stop": "node bot/live.mjs --stop",
+    "bot:topup": "node bot/lib/topup.mjs"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.4.0"

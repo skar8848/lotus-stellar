@@ -6,6 +6,7 @@ import { StopBot } from './chain.mjs';
 import { firstLine, startLoop } from './bot.mjs';
 import { jitter } from './limiter.mjs';
 import { CrossArb, PoolMM } from '../pool-legs.mjs';
+import { LiquidityGuard } from './guard.mjs';
 
 /**
  * Create the components and start their loops.
@@ -35,10 +36,11 @@ export function startComponents(bot, { only, arbEvery, mmEvery, crossEvery, flow
             first = false;
             await bot.sleep(flowWarmupMs); // let mm_a post its quotes first
           }
+          if (s.flowMode === 'live') return flow.liveTick();
           await flow.tick();
           await flow.rebalance();
         },
-        () => flow.nextDelayMs(),
+        () => (s.flowMode === 'live' ? flow.liveDelayMs() : flow.nextDelayMs()),
       ),
     );
   }
@@ -51,6 +53,13 @@ export function startComponents(bot, { only, arbEvery, mmEvery, crossEvery, flow
     bot.components.cross = cross;
     if (enabled.has('poolmm')) loops.push(startLoop(bot, 'poolmm', () => poolmm.tick(), () => jitter(s.poolMmIntervalSec * 1000, 0.2)));
     if (enabled.has('cross')) loops.push(startLoop(bot, 'cross', () => cross.tick(), () => jitter((crossEvery ?? s.crossIntervalSec) * 1000, 0.2)));
+  }
+  const extra = (bot.extraPools ?? []).map((a) => new PoolMM(bot, a, { primary: false }));
+  if (enabled.has('poolmm')) extra.forEach((pm, i) => loops.push(startLoop(bot, `poolx${i}`, () => pm.tick(), () => jitter(s.poolMmIntervalSec * 2000, 0.2))));
+  if (s.liq) {
+    const guard = new LiquidityGuard(bot, { mm, pools: [...(poolmm ? [poolmm] : []), ...extra] });
+    bot.components.guard = guard;
+    loops.push(startLoop(bot, 'liq', () => guard.tick(), () => jitter(s.liqIntervalSec * 1000, 0.1)));
   }
   loops.push(watchdog(bot));
   return { arb, mm, flow, poolmm, cross, loops };

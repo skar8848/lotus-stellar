@@ -23,21 +23,11 @@ import { parsePathPayment } from './lib/xdr.mjs';
 import { StopBot } from './lib/chain.mjs';
 import { firstLine } from './lib/bot.mjs';
 import { RC } from './lib/names.mjs';
-import { MarketMaker } from './mm.mjs';
+import { MarketMaker, mmView } from './mm.mjs';
+import { knownPrefix } from './lib/owners.mjs';
 
 const E7 = 1e7;
 const toNum = (stroops) => Number(stroops) / E7;
-const same = (a, b) => Math.abs(a - b) < 6e-8;
-
-/** The leading levels of a book side whose price matches one of `own` (offers of the bot's accounts). */
-function ownPrefix(levels, own) {
-  const out = [];
-  for (const l of levels) {
-    if (!own.some((o) => same(o.quote, l.price))) break;
-    out.push(l);
-  }
-  return out;
-}
 
 export class Arb {
   constructor(bot) {
@@ -141,6 +131,7 @@ export class Arb {
     } catch (e) {
       if (e instanceof StopBot) throw e;
       log.err('arb', `${tag}: buy leg failed (${firstLine(e)}); the book probably moved, retrying next tick`);
+      bot.softFail('arb');
       return;
     }
     const pp = parsePathPayment(buy.result);
@@ -165,6 +156,7 @@ export class Arb {
     } catch (e) {
       this.inventoryDirty = true;
       log.err('arb', `${tag}: redeem simulation failed (${firstLine(e)}); holding ${fromStroops(got)} ${RC}, will retry`);
+      bot.softFail('arb');
       return;
     }
     const shortfall = got - simPaid;
@@ -172,6 +164,7 @@ export class Arb {
       // more than 1 bp short
       this.inventoryDirty = true;
       log.warn('arb', `${tag}: redeem would pay ${fromStroops(simPaid)} for ${fromStroops(got)} ${RC} (pro-rata, vault under-backed): NOT redeeming, keeping the ${RC}`);
+      bot.softFail('arb');
       return;
     }
     let red;
@@ -181,6 +174,7 @@ export class Arb {
       if (e instanceof StopBot) throw e;
       this.inventoryDirty = true;
       log.err('arb', `${tag}: redeem failed (${firstLine(e)}); holding ${fromStroops(got)} ${RC}, will retry`);
+      bot.softFail('arb');
       return;
     }
     const paid = BigInt(red.returnValue ?? simPaid);
@@ -237,6 +231,7 @@ export class Arb {
       } catch (e) {
         if (e instanceof StopBot) throw e;
         log.err('arb', `${tag}: deposit failed (${firstLine(e)})`);
+        bot.softFail('arb');
         return;
       }
     }
@@ -255,6 +250,7 @@ export class Arb {
       if (e instanceof StopBot) throw e;
       this.inventoryDirty = true;
       log.err('arb', `${tag}: sell leg failed (${firstLine(e)}); holding the minted ${RC}, will redeem it at par if the bid is gone`);
+      bot.softFail('arb');
       return;
     }
     fees += sell.feeCharged ?? 0n;
@@ -292,26 +288,26 @@ export class Arb {
 
   // ------------------------------------------------------------ LBOND/USDC vs LBOND/receipt x receipt/USDC
 
-  /** The three SDEX books, cut down to the bot's own offers with --ladder leave. */
+  /** The three SDEX books, cut down to the bot's own offers (+ the team's demo offers with --ladder take). Never others'. */
   async triBooks() {
-    const { chain, assets, settings: s, acct } = this.bot;
+    const { chain, assets, acct } = this.bot;
     const [bond, peg, direct] = await Promise.all([
       chain.orderBook(assets.lbond, assets.lusdc),
       chain.orderBook(assets.lusdc, assets.usdc),
       chain.orderBook(assets.lbond, assets.usdc),
     ]);
-    if (s.ladder === 'take') return { bond, peg, direct };
+    const view = await mmView(this.bot);
+    const a = view.offers;
+    const t = view.team;
     const mm = new MarketMaker(this.bot);
-    if (!this.bot.mmState.offers || Date.now() - this.bot.mmState.at > 30_000) {
-      this.bot.mmState = { offers: mm.classify(await chain.accountOffers(acct.mm_a.pub)), at: Date.now() };
-    }
-    const a = this.bot.mmState.offers;
-    const b = mm.classify(await chain.accountOffers(acct.mm_b.pub)); // mm_b rests offers only in the scenarios
-    const own = (g) => [...a[g], ...b[g]];
+    // mm_b rests offers only in the scenarios; read them rarely
+    if (!this.mmbOffers || Date.now() - this.mmbOffers.at > 60_000) this.mmbOffers = { offers: mm.classify(await chain.accountOffers(acct.mm_b.pub)), at: Date.now() };
+    const b = this.mmbOffers.offers;
+    const L = (g) => [a[g], b[g], t[g]];
     return {
-      bond: { asks: ownPrefix(bond.asks, own('bondAsks')), bids: ownPrefix(bond.bids, own('bondBids')) },
-      peg: { asks: ownPrefix(peg.asks, own('pegAsks')), bids: ownPrefix(peg.bids, own('pegBids')) },
-      direct: { asks: ownPrefix(direct.asks, own('usdcAsks')), bids: ownPrefix(direct.bids, own('usdcBids')) },
+      bond: { asks: knownPrefix(bond.asks, L('bondAsks')), bids: knownPrefix(bond.bids, L('bondBids')) },
+      peg: { asks: knownPrefix(peg.asks, L('pegAsks')), bids: knownPrefix(peg.bids, L('pegBids')) },
+      direct: { asks: knownPrefix(direct.asks, L('usdcAsks')), bids: knownPrefix(direct.bids, L('usdcBids')) },
     };
   }
 
@@ -378,6 +374,7 @@ export class Arb {
       if (e instanceof StopBot) throw e;
       this.tri.failed += 1;
       log.err('arb', `${tag}: round trip failed as a whole (${firstLine(e)}); nothing moved`);
+      bot.softFail('arb');
       return;
     }
     const pp = parsePathPayment(res.result);
@@ -427,6 +424,7 @@ export class Arb {
       if (e instanceof StopBot) throw e;
       this.inventoryDirty = true;
       log.err('arb', `leftover redeem failed (${firstLine(e)})`);
+      this.bot.softFail('arb');
     }
   }
 }

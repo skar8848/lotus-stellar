@@ -21,6 +21,13 @@ The same holds for the LBOND/USDC SDEX book behind the app's "SDEX quoted in USD
 quotes are mm_a's (plus, if `04-seed-book.mjs --usdc-ladder` was run, a few asks from the team's `maker` account)
 and its prints are mm_b's flow and the arbitrageur. Market-maker volume is our own accounts trading with each other.
 
+`npm run bot:live` (below) produces the steady volume behind the /trade charts. That volume also comes from our own
+accounts: mm_b trades against mm_a's quotes (and sometimes against the team's demo ladders), the arbitrageur keeps the
+books consistent, and every trade is a real testnet transaction. **The LBOND price is a simulation.** It is modelled on
+the dynamics of a US 10-year Treasury: a simulated yield, a duration of 7 and carry accrual. The only real input is the
+starting point, the latest FRED DGS10 print fetched at first start (4.96% on 2026-10-22, recorded as
+`state.yield_ref_source` in `deployments/testnet.bot.json`). Every move after that is random, not market data.
+
 ## Quick start
 
 ```sh
@@ -38,6 +45,9 @@ npm run bot:demo                 # ~3 minute scripted run for the video, ends wi
 npm run bot:cross                # = --scenario cross-venue: dislocate the pool price, watch the arb close it against the SDEX
 npm run bot:keeper               # = --scenario keeper: let mm_a's offers rest (180 s), then distribute the vault interest
 npm run bot -- --help            # every option with its default
+npm run bot:live                 # long-running live mode for the charts (supervised, see "Live mode")
+npm run bot:stop                 # stop bot:live cleanly (own offers cancelled, own pool positions closed)
+npm run bot:topup -- --to mm_a   # one Blend faucet round through a fresh account, 1,000 USDC forwarded to mm_a
 ```
 
 Run order on a fresh checkout: the numbered scripts first (`01` to `04`: accounts, LBOND, receipt, books), then
@@ -72,6 +82,107 @@ faucet pays USDC only once per account (see Known limits): that USDC is the bot'
 The bot imports from `scripts/lib/` and modifies nothing there or in `contracts/`. The only numbered script it touches
 is `scripts/04-seed-book.mjs`, which gained the opt-in `--usdc-ladder` flag (default run unchanged).
 
+## Live mode (`npm run bot:live`)
+
+```sh
+cd scripts
+nohup npm run bot:live -- --console false >/dev/null 2>&1 &   # unattended
+tail -f bot/logs/bot-live.log                                   # watch it
+npm run bot:stop                                                # stop (waits for the cleanup)
+```
+
+`bot/live.mjs` is a small supervisor. It runs `bot/index.mjs` with the live preset (any bot option given after `--`
+overrides it). It refuses to start a second instance (`bot/logs/bot-live.pid`). It restarts the bot after a crash
+(15 s backoff, doubling, at most 10 restarts an hour), and never after a guard stop (exit code 3, e.g. XLM under
+`--min-xlm`). On SIGTERM or Ctrl+C it forwards one SIGTERM, and the bot then cancels its own offers and closes its own
+pool positions (`--cleanup true`). The bot log is `bot/logs/bot-live.log`, rotated at 20 MB with 5 files kept
+(`--log-max-mb`, `--log-keep`). Restarts are logged in `bot/logs/bot-live-supervisor.log`. Horizon and RPC hiccups are
+retried (5xx, network errors, 429 back-off; Soroban calls fail over to the backup RPC of `scripts/lib/rpc.mjs`). A
+component that fails 5 times in a row pauses for 30 s; the other components keep running.
+
+Preset: `--flow-mode live --ladder take --peg-noise-bps 1.5 --requote-bps 1.5 --level-size 60 --usdc-levels 4
+--usdc-level-size 60 --peg-size 550 --liq true --pool-extra-ids lbond-usdc-defindex --pool-shift-bins 2 --max-tx-per-min 40 --max-ops-per-min 150 --http-per-min 140 --tri-interval-sec 20
+--cross-interval-sec 10 --cleanup true`.
+
+**LBOND fair value (`lib/nav.mjs`, `--nav-model tsy`, also the default of `npm run bot`).** The price is that of a
+simulated 10-year Treasury:
+
+* yield `y`: Ornstein-Uhlenbeck around the reference yield `y_ref`, daily volatility `--yield-vol-bp-day` 6.5 bp
+  (real 10Y: about 5 to 8 bp a day), scaled to each time step by sqrt(dt). Mean reversion half-life
+  `--yield-half-life-days` 30. Poisson jumps, `--yield-jumps-per-day` 3, each 0.5x to 1.5x `--yield-jump-bp` 3 bp,
+  random sign.
+* `price = nav - duration * (y - y_ref)`, with `--duration-yrs` 7. The NAV accrues carry at the simulated yield
+  (`--carry-pct` to force a rate). A tiny OU micro noise of `--nav-noise-bps` 1 bp sits on top.
+* The yield is reflected so the price stays in `[--price-min 0.96, --price-max 1.03]`, which keeps the demo ladders
+  and pool ranges meaningful.
+* Real time, no acceleration (`--time-scale` only speeds up the carry, and only the demo scenario uses it).
+* `y_ref`: the latest FRED DGS10 value fetched at first start (no key needed), else `--yield-fallback` 4.2. The state
+  (`nav`, `yield_pct`, `yield_ref_pct`, source) is saved every 30 s in `deployments/testnet.bot.json`, so a restart
+  continues the same path. `--yield-refresh` refetches FRED and re-bases the NAV so the price does not jump.
+  `--nav-model flat` restores the previous model.
+* Order of magnitude: 7 x 6.5 bp, about 45 bps of price per day, about 30 bps over 10 hours; a jump moves it 10 to
+  30 bps.
+
+**Receipt price (lUSDCb/USDC): par, plus a few bps of noise, never a drift.** `lotus_vault` mints the receipt 1:1
+against USDC and redeems it 1:1 while fully backed, and the vault's yield is paid out by minting more receipt to the
+holders (keeper `distribute()`), not by raising the price of a receipt. A receipt is therefore always worth exactly
+1 USDC. Above par anyone mints and sells; below par anyone buys and redeems, and the arbitrageur does exactly that at
+2 bps (`--arb-threshold-bps`). So the receipt cannot drift above par the way a share-price token would. mm_a centres its
+peg quotes on `1 + noise` (OU, `--peg-noise-bps` 1.5, at most `--peg-noise-max-bps` 3, half-life 180 s, in 0.5 bp
+steps), 1 bp either side, and keeps its ask above `1 - threshold` and its bid below `1 + threshold`. Prints therefore
+land between about 0.9996 and 1.0004, and the peg arbitrage only fires when somebody else offers the receipt off par.
+
+**Consistency.** mm_a quotes LBOND/USDC around `fair` and LBOND/lUSDCb around `fair / peg_mid`, so
+LBOND/lUSDCb = LBOND/USDC / lUSDCb/USDC by construction. The triangular check (round trip at about -15 bps after the
+spreads) does not fire. mm_a re-centres its pool Ask/Bid positions when fair value has moved 2 bins (20 bps), and the
+cross-venue arbitrage keeps the pool and the SDEX aligned in between. The arbitrageur's legs only use bot or team depth: if that depth is gone before the second leg, it keeps the LBOND (the rebalance hands it back to mm_b) instead of selling into anyone else's offers.
+
+**Flow (`Flow.liveTick`, `--flow-mode live`).** Each SDEX market (LBOND/USDC, LBOND/lUSDCb, lUSDCb/USDC) has its own
+arrival process: exponential gaps at 2 to 4 trades a minute (`--flow-live-rate-min/max`, re-drawn every 3 to 8 minutes),
+and never more than `--flow-live-max-gap-sec` 40 s without a print. Every 1-minute candle therefore gets at least one
+trade, and usually several, which gives it a body and wicks. Markets that fall due together go into one transaction
+(mm_b lands at most one transaction per ledger). Sizes are log-normal: LBOND 1 to 40 (`--flow-bond-size-min/max`),
+receipt 5 to 100 (`--flow-peg-size-min/max`). Direction starts at 50/50, tilted towards the fair-value move since that
+market's last trade (`--flow-trend` 0.15), and towards keeping mm_b's own USDC and receipt near 350
+(`--flow-inv-bias` 0.3). That restoring force is what lets it run for hours without one side running dry. About 10% of
+LBOND/lUSDCb trades are routed USDC -> lUSDCb -> LBOND. Pool swaps: `--flow-pool-per-min` 0.3. Trades larger than a
+level (60 LBOND) walk into the next one, 10 bps further.
+
+**Every minute, every market.** On top of the random arrivals there is a hard guarantee: if a market has no trade
+landed in the current UTC minute by second `--flow-force-at-sec` (35), mm_b sends a small forced trade there. It goes
+in the direction of the fair-value drift and is retried every 3 s until one lands. Pool swaps are held back in that
+window so they do not block mm_b's sequence number.
+
+**Liquidity guard (`lib/guard.mjs`, `--liq true` in the preset).** Every 60 s it checks both sides of every book:
+
+* LBOND/USDC and LBOND/lUSDCb: at least `--liq-bond-min` 200 LBOND within `--liq-band-pct` 1% of fair value.
+* lUSDCb/USDC: at least `--liq-peg-min` 500 within `--liq-peg-band-bps` 10 bps of par.
+* Each pool mm_a quotes (the idle pool, plus the vault-backed `lbond-usdc-defindex` through `--pool-extra-ids`): an
+  Ask and a Bid position with inventory, whose first bin is within 1% of fair value.
+
+Each check is one `liq check:` log line. When a side is short, mm_a's inventory is topped up first: LBOND issued by
+`rwa_issuer`; USDC from the treasury `blocked_taker` only above its 3,000 floor (`--liq-treasury-keep`), else a Blend
+faucet round through a fresh account (`--liq-topup-max` 8 per 24 h, counted from `testnet.bot.json`); lUSDCb minted
+with `lotus_vault.deposit()`. Then the guard re-quotes at full size and re-posts the missing pool positions. Every
+top-up is logged with its tx link. The preset sizes mm_a's quotes so the minimums hold with margin: 4 levels of
+60 LBOND on each LBOND book, and 550 lUSDCb on each side of the peg.
+
+**Inventory for 10+ hours.** Every 90 s, plain payments (no trade prints) move USDC, lUSDCb and LBOND between mm_a,
+mm_b and arb when one of them runs low. The arbitrageur keeps `--arb-keep-usdc` 600 and hands the surplus back. If the
+three accounts together hold less than `--topup-below-usdc` 900 USDC, the bot runs one Blend faucet round through a
+fresh account (`lib/topup.mjs`: friendbot, faucet, forward 1,000 USDC). It does this at most `--topup-max` 3 times
+per run, 10 minutes apart, and records each round in `testnet.bot.json` under `setup.topups`. The treasury
+`blocked_taker` is never touched.
+
+**Whose offers it trades against (`lib/owners.mjs`).** There are three kinds of offers. Own: mm_a and mm_b. Team: the
+demo liquidity accounts `maker` and `peg_lp`. Others: everybody else, including app users. The bot never cancels or
+modifies an offer it does not own. Its quotes are clamped on all three books so they never cross another account's
+offers. Its takers (flow, triangular and cross-venue arbitrage) stop at the first book level holding liquidity they
+cannot attribute to own or team offers. With `--ladder take` (live preset) the team's stale demo levels are the one
+exception: they may be traded through like any participant would, for example mm_b buying maker's 1.00 LBOND/lUSDCb
+ask, or a quote of mm_a's filling against it on posting. `node scripts/04-seed-book.mjs --reset` re-posts them. The
+peg arbitrage is unchanged: it buys any receipt offered under par and redeems it, which is the peg mechanism itself.
+
 ## What each component does
 
 ### Peg arbitrageur (`arb.mjs`)
@@ -95,13 +206,16 @@ run summary prints.
 
 Each tick mm_a reads its own offers and sends at most one transaction that updates only the slots whose price
 drifted more than `--requote-bps` (4) from simulated fair value, or whose size is under 60% of target.
-**Simulated fair value**: LBOND NAV starts at 1.00, accrues `--nav-apr` (5%) and carries a mean-reverting
-(Ornstein-Uhlenbeck) noise of about 3 bps; there is no oracle, the bond is simulated. `--time-scale` accelerates
-the accrual (the demo uses x5000; accelerated runs do not persist their NAV).
+**Simulated fair value**: the simulated 10-year Treasury described under "Live mode" (`--nav-model tsy`, the
+default), or with `--nav-model flat` the previous model (NAV accruing at `--nav-apr`, OU noise). There is no oracle;
+the bond is simulated. `--time-scale` accelerates the accrual only (the demo uses x5000; accelerated runs do not
+persist their state).
 Quotes never cross another account's offers: they are clamped against the book minus mm_a's own offers, and
 operations in a re-quote transaction are ordered so a bid never sits above an ask. `mm_a` never cancels or
 modifies an offer it does not own.
 
+**`--ladder` (see also "Whose offers it trades against").** `take` now only concerns the team's demo accounts
+(`maker`, `peg_lp`); app users' offers are clamped against and never taken, whatever the setting.
 **`--ladder leave` (default).** The demo ladder (`maker`'s asks at 0.98 / 0.99 / 1.00 / 1.01 / 1.02) is left alone: mm_a's
 bond bids are clamped just under the cheapest ask in the book (0.9799 while the 0.98 level exists, 0.9899 once it is
 consumed) and mm_b only sells LBOND on the bond book. `--ladder take` quotes a normal +/- 5 bps book and lets the bot
@@ -282,6 +396,30 @@ cheap offers between detection and the buy; the buy then fails, and a failed cla
   The circular transaction shape was checked once by hand: 1 USDC from `arb` to itself via [LBOND, lUSDCb], 3 fills
   all against mm_a, 0.9892666 USDC back (tx `eecd1ca8f333db1e175be6df0f83d09217677d116bc8a4863fab5ba0f3a855b3`).
 
+### Live mode on testnet (2026-10-26)
+
+Four supervised runs on testnet between 04:10 and 04:53 UTC (10 min, 10 min, 11 min ended by `npm run bot:stop`,
+10 min with the guard and the forced trades). Horizon `/trade_aggregations`, 1-minute resolution:
+
+| | LBOND/USDC | LBOND/lUSDCb | lUSDCb/USDC |
+| --- | --- | --- | --- |
+| last run (9 full minutes, 04:44 to 04:53) | 9/9 minutes, 27 trades (2 to 5 a minute) | 9/9, 26 trades (2 to 5) | 9/9, 24 trades (1 to 4) |
+| candles with a body / a wick, last run | 7 / 7 of 9 | 7 / 8 | 7 / 7 |
+| whole span, 04:10 to 04:53 | 41/43 minutes, 138 trades | 41/43, 103 trades | 41/43, 126 trades |
+| price range | 0.99831 to 1.00258 | 0.99833 to 1.00241 | 0.99970 to 1.00050 |
+
+The two empty minutes of the whole span are the restarts between runs. The single 1.0005 print on lUSDCb/USDC was
+peg_lp's demo ask, taken before the par band filter was added. Last run: 126 transactions, 0 failed, 0 HTTP 429,
+86 Horizon requests a minute, about 67 Soroban RPC requests a minute, 5 forced end-of-minute trades. Fees were
+0.222 XLM in 10 minutes, mostly first-time pool positions in two pools and one deposit. Steady state is under about
+1.3 XLM an hour: classic trades and re-quotes cost 0.00001 XLM per operation, pool swaps about 0.003 XLM, position
+re-posts about 0.05 XLM. That is noise against the 10,000 XLM per account and the 200 XLM guard. Errors over all
+runs: 4 failed re-quotes (`op_underfunded` x2 before the guard existed, `op_offer_not_found` x2 when a quote was
+consumed between read and update; the next tick re-posts). The guard found the peg bid and all 4 pool sides short at
+start and fixed them in 35 s: 1,000 USDC from the faucet through a fresh account (tx `14d70b2b...`), 432 lUSDCb
+minted (tx `50676566...`), 4 positions posted. The treasury `blocked_taker` held 2,973 USDC, under its 3,000 floor,
+so it was not used. The SIGTERM stop cancelled all of mm_a's offers and closed its pool positions.
+
 ## Known limits
 
 * The classic leg and the contract leg of an arbitrage cycle are separate transactions (Soroban allows one operation
@@ -296,7 +434,8 @@ cheap offers between detection and the buy; the buy then fails, and a failed cla
   a pool `add_position` about 0.05. Classic operations cost 0.00001 XLM. The 200 XLM guard is therefore far from binding.
 * Flow is sequential per account and each transaction waits for a ledger (about 5 s), so one account cannot print more
   than one transaction per ledger; bursts are therefore sent as one multi-operation transaction.
-* LBOND is a simulated bond: its price comes from the model above, not from any market.
+* LBOND is a simulated bond: its price comes from the model above (a simulated 10Y yield that starts at a real FRED
+  DGS10 print), not from any market.
 * LBOND/USDC depth is bounded by mm_a's USDC (about 400 working capital, shared with the peg bid and the pool Bid).
   The faucet pays once per account, so `bot:setup` can only top it up from mm_a's spare receipt. After a depeg test,
   re-run `bot:setup` or let the bids run smaller.

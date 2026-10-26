@@ -20,6 +20,9 @@ export function printSummary(bot, { title = 'Run summary' } = {}) {
   log.raw(`  requests         ${stats.http} Horizon, ~${stats.rpc} Soroban RPC  (${(stats.http / (secs / 60)).toFixed(0)} Horizon req/min)`);
   log.raw(`  rate limiting    ${stats.rateLimited} HTTP 429 incident(s), ${(stats.backoffMs / 1000).toFixed(1)}s of back-off, ${stats.httpErrors} retried 5xx/network error(s)`);
   if (stats.errors.size) log.raw(`  errors by kind   ${[...stats.errors.entries()].map(([k, v]) => `${k} x${v}`).join(', ')}`);
+  const bm = stats.byMarket ?? {};
+  const fl = bot.components?.flow;
+  if (s.flowMode === 'live') log.raw(`  flow by market   LBOND/USDC ${bm.usdc ?? 0}, LBOND/${RC} ${bm.bond ?? 0}, ${RC}/USDC ${bm.peg ?? 0}, pool ${bm.pool ?? 0} (routed trades count on both books); ${fl?.forcedTrades ?? 0} forced end-of-minute trade(s), ${fl?.skipped ?? 0} skipped; ${stats.requotes ?? 0} re-quotes`);
   log.raw(`  market activity  ${stats.flowTrades} flow trades, ${stats.fills} fills in bot-taker txs, ~${stats.volumeLusdc.toFixed(2)} ${RC}/USDC of fill volume`);
 
   const fees = [...stats.feeStroops.entries()].map(([k, v]) => `${k} ${xlm(v)}`).join(', ');
@@ -46,6 +49,8 @@ export function printSummary(bot, { title = 'Run summary' } = {}) {
   } else {
     log.raw('  arb ledger       no cycle (the peg book never offered an edge above the threshold)');
   }
+  const g = bot.components?.guard;
+  if (g) log.raw(`  liquidity guard  ${g.checks} check(s), ${g.shortChecks} found a side short, ${g.actions} top-up action(s)`);
   const tri = bot.components?.arb?.tri;
   if (s.usdcBook === 'on' && tri?.checks) {
     const r = (x) => (x == null ? 'n/a' : `${x.toFixed(1)} bps`);
@@ -62,11 +67,11 @@ export async function cleanupOffers(bot) {
   const wasStopping = bot.stopping;
   bot.stopping = false; // chain.reserve() refuses to work while stopping
   try {
-    if (bot.poolAdapter) {
+    for (const adapter of [bot.poolAdapter, ...(bot.extraPools ?? [])].filter(Boolean)) {
       for (const label of ['mm_a', 'mm_b']) {
         try {
-          for (const id of await bot.poolAdapter.positionsOf(bot.acct[label].pub)) {
-            const r = await bot.poolAdapter.removePosition(label, id);
+          for (const id of await adapter.positionsOf(bot.acct[label].pub)) {
+            const r = await adapter.removePosition(label, id);
             log.act('cleanup', `${label}: closed pool position #${id} (${fromStroops(r.base ?? 0n)} LBOND, ${fromStroops(r.quote ?? 0n)} USDC back)`, r.hash);
           }
         } catch (e) {

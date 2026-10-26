@@ -73,12 +73,31 @@
     },
     "notes": [
       "The Blend testnet faucet pays 1,000 USDC only to accounts that have no USDC trustline yet; a second call returns an empty transaction."
+    ],
+    "topups": [
+      {
+        "at": "2026-10-26T04:43:47.294Z",
+        "to": "mm_a",
+        "amount": 1000,
+        "via": "GC37RNVBTHXKRT7GYPXXKAUW6BK2JWKGU36SSEC7XQUGEEJCJYCNTLY5",
+        "txs": {
+          "faucet": "5e6fc50b5d7fb1ca64194e72322806a064389215f45de6553ba873bb1519a991",
+          "forward": "14d70b2bad6eac4ccefc82ba677b2b8e71bf66833958a8fb81d4afc8202de307"
+        },
+        "trigger": "liquidity guard"
+      }
     ]
   },
   "state": {
-    "nav": 1.0000036391,
-    "nav_at": "2026-10-26T00:56:31.908Z",
-    "note": "simulated LBOND NAV (1.00 at start, 5% APR accrual); accelerated demo runs do not persist"
+    "nav": 1.0000074972,
+    "nav_at": "2026-10-26T04:53:47.733Z",
+    "note": "simulated LBOND fair value (see scripts/bot/lib/nav.mjs); not market data",
+    "model": "tsy-10y",
+    "yield_pct": 4.953816,
+    "yield_ref_pct": 4.96,
+    "duration_yrs": 7,
+    "price": 1.0004404,
+    "yield_ref_source": "FRED DGS10 2026-10-22"
   },
   "purpose": "Testnet. Market makers (mm_a, mm_b) and an arbitrageur (arb) operated by the Lotus team, trading assets the team issues (LBOND) or mints through lotus_vault (lUSDCb).",
   "roles": {
@@ -102,7 +121,7 @@
     }
   },
   "lotus_vault_contract": "CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG",
-  "updated_at": "2026-10-26T00:56:31.908Z",
+  "updated_at": "2026-10-26T04:53:47.734Z",
   "legacy_receipt": {
     "code": "lUSDC",
     "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",

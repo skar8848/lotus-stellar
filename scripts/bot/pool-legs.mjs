@@ -18,9 +18,9 @@ import { StopBot } from './lib/chain.mjs';
 import { firstLine } from './lib/bot.mjs';
 import { parsePathPayment } from './lib/xdr.mjs';
 import { RC } from './lib/names.mjs';
+import { knownPrefix } from './lib/owners.mjs';
 
 const E7 = 1e7;
-const same = (a, b) => Math.abs(a - b) < 6e-8;
 const stroops = (x) => BigInt(Math.round(Number(x) * E7));
 
 // ===================================================================== shared state on the bot
@@ -33,11 +33,18 @@ export function poolState(bot) {
 // ===================================================================== market maker (mm_a)
 
 export class PoolMM {
-  constructor(bot, pool) {
+  /** primary: the pool the flow and the cross-venue arb use (state shared on bot.poolState); extra pools keep their own. */
+  constructor(bot, pool, { primary = true } = {}) {
     this.bot = bot;
     this.pool = pool;
     this.inflight = null;
     this.requotes = 0;
+    this.primary = primary;
+    this.local = { mine: { Ask: null, Bid: null }, at: 0 };
+  }
+
+  st() {
+    return this.primary ? poolState(this.bot) : this.local;
   }
 
   tick() {
@@ -64,7 +71,7 @@ export class PoolMM {
       }
       mine[p.side] = p;
     }
-    const st = poolState(bot);
+    const st = this.st();
     st.mine = mine;
     st.at = Date.now();
     return mine;
@@ -85,6 +92,7 @@ export class PoolMM {
     const { bot, pool } = this;
     const { settings: s, log, chain } = bot;
     if (bot.paused.poolmm) return;
+    const tagPool = this.primary ? '' : ` [${this.pool.label ?? this.pool.contractId}]`;
     const fair = bot.nav.step().fair;
     const mine = await this.sync();
     const bal = bot.balances.mm_a && Date.now() - bot.balances.mm_a.at < 20_000 ? bot.balances.mm_a : await chain.refreshBalances('mm_a');
@@ -118,11 +126,11 @@ export class PoolMM {
       mine[side] = { id: add.id, side, lo: target.lo, hi: target.hi, deposited: stroops(size), inventory: stroops(size) };
       log.act(
         'mm_a',
-        `POOL ${side.toUpperCase()} position #${add.id}: bins ${target.lo}..${target.hi} = ${pool.priceAt(target.lo).toFixed(4)}..${pool.priceAt(target.hi).toFixed(4)}, ${size} ${side === 'Ask' ? 'LBOND' : 'USDC'} spread over ${s.poolLevels} bins; fair ${fair.toFixed(5)}, ${why}${returned}`,
+        `POOL${tagPool} ${side.toUpperCase()} position #${add.id}: bins ${target.lo}..${target.hi} = ${pool.priceAt(target.lo).toFixed(4)}..${pool.priceAt(target.hi).toFixed(4)}, ${size} ${side === 'Ask' ? 'LBOND' : 'USDC'} spread over ${s.poolLevels} bins; fair ${fair.toFixed(5)}, ${why}${returned}`,
         add.hash,
       );
     }
-    poolState(bot).mine = mine;
+    this.st().mine = mine;
   }
 
   /** Close mm_a's positions (used by --cleanup). */
@@ -137,16 +145,6 @@ export class PoolMM {
 }
 
 // ===================================================================== cross-venue arbitrage (arb)
-
-/** The leading book levels that belong to mm_a: with --ladder leave the arb only trades against those. */
-function ownPrefix(levels, ownList) {
-  const out = [];
-  for (const l of levels) {
-    if (!ownList.some((o) => same(o.quote, l.price))) break;
-    out.push(l);
-  }
-  return out;
-}
 
 export class CrossArb {
   constructor(bot, pool) {
@@ -164,26 +162,25 @@ export class CrossArb {
     this.bot.log.warn('cross', msg);
   }
 
-  /** SDEX books the arb may trade against (all, or only mm_a's quotes with --ladder leave). */
+  /** SDEX books the arb may trade against: mm_a's quotes (+ the team's demo offers with --ladder take), never others'. */
   async books() {
     const { bot } = this;
-    const { chain, assets, settings: s, acct } = bot;
+    const { chain, assets, settings: s } = bot;
     const usdcOn = s.usdcBook === 'on';
     const [bond, peg, direct] = await Promise.all([
       chain.orderBook(assets.lbond, assets.lusdc),
       chain.orderBook(assets.lusdc, assets.usdc),
       usdcOn ? chain.orderBook(assets.lbond, assets.usdc) : { bids: [], asks: [] },
     ]);
-    if (s.ladder === 'take') return { bond, peg, direct };
-    if (!bot.mmState.offers || Date.now() - bot.mmState.at > 30_000) {
-      const { MarketMaker } = await import('./mm.mjs');
-      bot.mmState = { offers: new MarketMaker(bot).classify(await chain.accountOffers(acct.mm_a.pub)), at: Date.now() };
-    }
-    const own = bot.mmState.offers;
+    const { mmView } = await import('./mm.mjs');
+    const view = await mmView(bot);
+    const own = view.offers;
+    const t = view.team;
+    const L = (g) => [own[g] ?? [], t[g] ?? []];
     return {
-      bond: { asks: ownPrefix(bond.asks, own.bondAsks), bids: ownPrefix(bond.bids, own.bondBids) },
-      peg: { asks: ownPrefix(peg.asks, own.pegAsks), bids: ownPrefix(peg.bids, own.pegBids) },
-      direct: { asks: ownPrefix(direct.asks, own.usdcAsks ?? []), bids: ownPrefix(direct.bids, own.usdcBids ?? []) },
+      bond: { asks: knownPrefix(bond.asks, L('bondAsks')), bids: knownPrefix(bond.bids, L('bondBids')) },
+      peg: { asks: knownPrefix(peg.asks, L('pegAsks')), bids: knownPrefix(peg.bids, L('pegBids')) },
+      direct: { asks: knownPrefix(direct.asks, L('usdcAsks')), bids: knownPrefix(direct.bids, L('usdcBids')) },
     };
   }
 
@@ -295,8 +292,15 @@ export class CrossArb {
         const got = sw.out; // LBOND received (stroops)
         log.act('cross', `${tag} POOL BUY  ${fromStroops(got)} LBOND (avg ${c.poolPrice.toFixed(5)} USDC incl fee)`, sw.hash);
         const expected = this.sdexSell(await this.books(), Number(got) / E7);
-        const destMin = amt7Floor((expected ? expected.usdc : c.revenue) * 0.996);
-        const venue = expected?.venue ?? c.venue;
+        if (!expected) {
+          // no bot/team-owned SDEX depth left for the sell: never fall back to a blind price that could fill others' offers.
+          // The LBOND stays with arb; Flow.rebalance hands it back to mm_b.
+          log.warn('cross', `${tag}: no bot-owned SDEX depth for the sell leg any more; keeping ${fromStroops(got)} LBOND (swept back by the rebalance)`);
+          bot.softFail('cross');
+          return;
+        }
+        const destMin = amt7Floor(expected.usdc * 0.996);
+        const venue = expected.venue;
         const sell = await chain.submit({
           label: 'arb',
           memo: 'lotus cross sell',
@@ -330,8 +334,9 @@ export class CrossArb {
       }
     } catch (e) {
       if (e instanceof StopBot) throw e;
-      log.err('cross', `${tag}: leg failed (${firstLine(e)}); arb may be holding LBOND until the next tick unwinds it`);
+      log.err('cross', `${tag}: leg failed (${firstLine(e)}); arb may be holding LBOND, the rebalance hands it back to mm_b`);
       bot.stats.error('cross:leg');
+      bot.softFail('cross');
       return;
     }
     const after = await chain.refreshBalances('arb');

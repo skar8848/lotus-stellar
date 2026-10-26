@@ -39,6 +39,8 @@ function banner(bot) {
   log.raw(`network   ${env.cfg.passphrase}`);
   log.raw(`horizon   ${env.cfg.horizon}   rpc ${env.cfg.rpc}`);
   log.raw(`vault     ${env.contractId}`);
+  log.raw(bot.modelLine());
+  if (s.flowMode === 'live') log.raw(`flow      live: ${s.flowLiveRateMin}-${s.flowLiveRateMax} trades/min per SDEX market (max gap ${s.flowLiveMaxGapSec}s), LBOND ${s.flowBondSizeMin}-${s.flowBondSizeMax}, ${RC} ${s.flowPegSizeMin}-${s.flowPegSizeMax}, pool ${s.flowPoolPerMin}/min | peg noise ${s.pegNoiseBps} bps (max ${s.pegNoiseMaxBps})`);
   for (const [label, a] of Object.entries(bot.acct)) log.raw(`${label.padEnd(9)} ${a.pub}`);
   log.raw(
     `settings  arb >= ${s.arbThresholdBps} bps | ${s.levels} levels x ${s.spacingBps} bps (size ${s.levelSize}) | flow ~1 trade/${s.flowMinSec}-${s.flowMaxSec}s | caps ${s.maxTxPerMin} tx/min ${s.maxOpsPerMin} ops/min ${s.httpPerMin} req/min | min ${s.minXlm} XLM | ladder=${s.ladder} | usdc-book=${s.usdcBook}${s.usdcBook === 'on' ? ` (${s.usdcLevels} x ${s.usdcLevelSize} LBOND)` : ''}${s.dryRun ? ' | DRY-RUN' : ''}${s.cleanup ? ' | cleanup on exit' : ''}`,
@@ -55,9 +57,8 @@ async function main() {
   const env = loadBotEnv(); // refuses non-testnet networks, requires bot:setup to have run
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const logFile = settings.logFile === 'none' ? null : settings.logFile || path.join(BOT_DIR, 'logs', `bot-${stamp}.log`);
-  const log = createLogger({ file: logFile, quiet: settings.quiet });
+  const log = createLogger({ file: logFile, quiet: settings.quiet, console: settings.console, maxBytes: settings.logMaxMb * 1024 * 1024, keep: settings.logKeep });
   const bot = new Bot({ env, settings, log });
-  banner(bot);
 
   let interrupted = false;
   const onSignal = (sig) => {
@@ -70,9 +71,11 @@ async function main() {
   };
   process.on('SIGINT', () => onSignal('Ctrl+C'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
+  process.on('unhandledRejection', (e) => log.err('bot', `unhandled rejection: ${e?.stack ?? e}`));
 
   try {
     await bot.init();
+    banner(bot);
     await bot.initPool();
     log.table(
       ['account', 'XLM', 'USDC', `${RC}`, 'LBOND'],
@@ -103,7 +106,7 @@ async function main() {
   bot.saveNavState();
   printSummary(bot);
   log.raw(`\nstopped: ${bot.stopReason ?? 'finished'}`);
-  process.exit(bot.stopReason && /fatal|guard|holds/.test(bot.stopReason) ? 2 : 0);
+  process.exit(bot.stopReason && /guard|holds/.test(bot.stopReason) ? 3 : bot.stopReason && /fatal/.test(bot.stopReason) ? 2 : 0);
 }
 
 const isMain = process.argv[1] && import.meta.url === new URL(`file://${path.resolve(process.argv[1])}`).href;

@@ -19,6 +19,9 @@ export const DEFAULTS = Object.freeze({
   cleanup: false, // on stop, cancel the bot's OWN open offers (mm_a, mm_b)
   quiet: false,
   logFile: '', // default: scripts/bot/logs/bot-<timestamp>.log (set to "none" to disable)
+  logMaxMb: 20, // rotate the log file at this size (file.1 .. file.<log-keep>)
+  logKeep: 5,
+  console: true, // false: write to the log file only (for nohup)
 
   // ---- safety
   minXlm: 200, // stop the bot if any bot account falls below this XLM balance
@@ -58,12 +61,29 @@ export const DEFAULTS = Object.freeze({
   triMinEdgeBps: 6, // ... acts when the round trip clears this many bps
   triMaxNotional: 100, // ... USDC per round trip (one atomic circular path payment)
 
-  // ---- simulated LBOND fair value (NAV)
+  // ---- simulated LBOND fair value (see lib/nav.mjs)
+  navModel: 'tsy', // tsy: priced like a US 10-year Treasury from a simulated yield ; flat: NAV accrual at --nav-apr + noise
   navStart: 0, // 0 = continue from the saved state (or 1.00 on first run)
-  navApr: 5, // simulated bond yield, % per year
-  navNoiseBps: 3, // stationary std of the mean-reverting noise
-  navHalfLifeSec: 90,
-  timeScale: 1, // accelerate the NAV accrual (the demo scenario uses 5000: one minute = 3.5 days)
+  navApr: 5, // flat model only: simulated bond yield, % per year
+  navNoiseBps: 1, // stationary std of the small mean-reverting micro noise on top of the model price (flat model: 3 was the old default)
+  navHalfLifeSec: 120,
+  timeScale: 1, // accelerate the NAV (carry) accrual only (the demo scenario uses 5000: one minute = 3.5 days)
+  yieldRef: 0, // tsy: reference 10Y yield in %. 0 = saved state, else the latest FRED DGS10 print, else --yield-fallback
+  yieldFallback: 4.2, // tsy: used when FRED cannot be reached and nothing is saved
+  yieldRefresh: false, // tsy: refetch DGS10 and restart the simulated yield from it (price continuity is kept: the NAV is re-based)
+  yieldVolBpDay: 6.5, // tsy: daily std of the simulated yield, in bp (real 10Y: ~5-8 bp/day)
+  yieldHalfLifeDays: 30, // tsy: mean reversion of the yield towards the reference
+  yieldJumpsPerDay: 3, // tsy: Poisson rate of small jumps
+  yieldJumpBp: 3, // tsy: jump size, bp (each jump is 0.5x..1.5x this, random sign)
+  durationYrs: 7, // tsy: modified duration, price = nav - duration * (yield - ref)
+  carryPct: 0, // tsy: carry accrual, % per year (0 = the current simulated yield)
+  priceMin: 0.96, // tsy: the simulated price is kept inside [price-min, price-max]
+  priceMax: 1.03,
+
+  // ---- receipt (lUSDCb) price on the USDC/receipt book: par +/- a few bps (the vault redeems 1:1, yield is minted)
+  pegNoiseBps: 0, // stationary std of the mid's OU noise around 1.0000 (0 = mm_a quotes exactly 1 -/+ peg-half-spread)
+  pegNoiseMaxBps: 3, // the mid never leaves par by more than this
+  pegNoiseHalfLifeSec: 180,
 
   // ---- flow generator (mm_b)
   flowMinSec: 10,
@@ -72,6 +92,34 @@ export const DEFAULTS = Object.freeze({
   flowSizeMax: 10,
   flowPegWeight: 0.55, // probability that a flow trade is on the peg book (else the bond book)
   flowTouchForeign: false, // true: flow may also consume other accounts' offers (demo ladder, peg_lp)
+  flowMode: 'classic', // classic: one clip every --flow-min-sec..--flow-max-sec ; live: per-market arrival processes (bot:live)
+  flowLiveRateMin: 2, // live: trades per minute per SDEX market, drawn in [min, max] every few minutes
+  flowLiveRateMax: 4,
+  flowLiveMinGapSec: 4,
+  flowLiveMaxGapSec: 40, // live: never longer than this without a print on a market (every 1-minute candle gets one)
+  flowForceAtSec: 35, // live: a market without a trade in the current UTC minute by this second gets a small forced trade
+  flowBondSizeMin: 1, // live: LBOND clip sizes (log-normal) on LBOND/USDC and LBOND/receipt
+  flowBondSizeMax: 40,
+  flowPegSizeMin: 5, // live: receipt clip sizes on receipt/USDC
+  flowPegSizeMax: 100,
+  flowPoolPerMin: 0.3, // live: Lotus pool swaps per minute (Soroban, ~0.003 XLM each)
+  flowTrend: 0.15, // live: buy-probability tilt towards the recent fair-value move
+  flowInvBias: 0.3, // live: buy-probability tilt that brings mm_b's inventory back to its targets
+  flowTargetUsdc: 350, // live: mm_b's USDC target
+  flowTargetReceipt: 350, // live: mm_b's receipt target
+  liq: false, // liquidity guard (bot:live): both sides of every book and pool always quoted, inventory minted/fetched when short
+  liqIntervalSec: 60,
+  liqBandPct: 1, // LBOND books and pools: depth counted within this % of fair value
+  liqBondMin: 200, // LBOND per side within the band, on LBOND/USDC and LBOND/receipt
+  liqPegBandBps: 10, // receipt/USDC: depth counted within this many bps of par
+  liqPegMin: 500, // receipt per side within the band
+  liqTreasuryKeep: 3000, // USDC the treasury account blocked_taker always keeps (the app faucet pays from it)
+  liqTopupMax: 8, // Blend faucet rounds allowed per 24 h for the guard
+  poolExtraIds: '', // comma-separated ids of extra live pools where mm_a also keeps an Ask and a Bid position (e.g. lbond-usdc-defindex)
+  arbKeepUsdc: 600, // rebalance: USDC the arbitrageur keeps; the surplus goes back to the market makers
+  topup: true, // rebalance: when the bots' USDC runs out, one Blend faucet round through a fresh account
+  topupBelowUsdc: 900, // ... when mm_a + mm_b + arb hold less USDC than this
+  topupMax: 3, // ... at most this many per run, 10 minutes apart
 
   // ---- Lotus range pool (LBOND/USDC), behind a feature flag
   pool: 'auto', // auto: use the live LBOND/USDC pool of deployments/testnet.pool.json when there is one ; on: require it ; off: never
@@ -134,6 +182,7 @@ export function buildSettings(args) {
   if (out.usdcLevels < 1 || out.usdcLevels > 8) throw new Error('--usdc-levels must be between 1 and 8');
   if (!['cheap', 'rich', 'both'].includes(out.crossDir)) throw new Error('--cross-dir must be cheap, rich or both');
   if (out.levels < 1 || out.levels > 8) throw new Error('--levels must be between 1 and 8');
+  if (!['classic', 'live'].includes(out.flowMode)) throw new Error('--flow-mode must be classic or live');
   if (out.flowMinSec > out.flowMaxSec) throw new Error('--flow-min-sec must be <= --flow-max-sec');
   return out;
 }

@@ -1,7 +1,7 @@
 // The Bot object: one per process, shared by every component (arb, mm, flow, scenarios).
 
 import { Chain, StopBot } from './chain.mjs';
-import { NavModel } from './nav.mjs';
+import { FlatModel, PegModel, TreasuryModel, fetchDgs10 } from './nav.mjs';
 import { Stats, interruptibleSleep } from './limiter.mjs';
 import { loadBotJson, saveBotJson } from './env.mjs';
 import { short } from './log.mjs';
@@ -30,14 +30,12 @@ export class Bot {
 
     const saved = loadBotJson().state ?? {};
     const nav0 = settings.navStart > 0 ? settings.navStart : saved.nav > 0 ? saved.nav : 1;
-    this.nav = new NavModel({
-      nav0,
-      aprPct: settings.navApr,
-      noiseBps: settings.navNoiseBps,
-      halfLifeSec: settings.navHalfLifeSec,
-      timeScale: settings.timeScale,
-    });
+    this.savedState = saved;
+    // placeholder until initModel() (async: it may fetch the FRED reference yield)
+    this.nav = this.makeModel({ nav0, yieldRefPct: settings.yieldRef > 0 ? settings.yieldRef : saved.yield_ref_pct ?? settings.yieldFallback, yieldPct: saved.yield_pct });
     this.navStart = nav0;
+    this.yieldSource = saved.yield_ref_source ?? null;
+    this.peg = new PegModel({ noiseBps: settings.pegNoiseBps, maxBps: settings.pegNoiseMaxBps, halfLifeSec: settings.pegNoiseHalfLifeSec });
     this.arbLedger = []; // filled by Arb
     this.poolAdapter = null; // set by the pool leg when enabled
   }
@@ -47,11 +45,77 @@ export class Bot {
     return this.env.roleOf(pub) ?? short(pub, 4);
   }
 
+  makeModel({ nav0, yieldRefPct, yieldPct }) {
+    const s = this.settings;
+    if (s.navModel === 'flat') {
+      return new FlatModel({ nav0, aprPct: s.navApr, noiseBps: s.navNoiseBps, halfLifeSec: s.navHalfLifeSec, timeScale: s.timeScale });
+    }
+    return new TreasuryModel({
+      nav0,
+      yieldRefPct,
+      yieldPct,
+      carryPct: s.carryPct,
+      durationYrs: s.durationYrs,
+      volBpDay: s.yieldVolBpDay,
+      halfLifeDays: s.yieldHalfLifeDays,
+      jumpsPerDay: s.yieldJumpsPerDay,
+      jumpBp: s.yieldJumpBp,
+      microBps: s.navNoiseBps,
+      microHalfLifeSec: s.navHalfLifeSec,
+      priceMin: s.priceMin,
+      priceMax: s.priceMax,
+      timeScale: s.timeScale,
+    });
+  }
+
+  /**
+   * Treasury model: pick the reference yield. Order: --yield-ref, the saved state (continuity across restarts),
+   * the latest FRED DGS10 print, --yield-fallback. --yield-refresh refetches FRED and re-bases the NAV so the
+   * price does not jump.
+   */
+  async initModel() {
+    const s = this.settings;
+    if (s.navModel === 'flat') return;
+    const saved = this.savedState ?? {};
+    const hasSaved = saved.model === 'tsy-10y' && saved.yield_ref_pct > 0 && s.navStart <= 0;
+    let ref = null;
+    if (s.yieldRef > 0) ref = { pct: s.yieldRef, source: '--yield-ref' };
+    else if (hasSaved && !s.yieldRefresh) ref = { pct: saved.yield_ref_pct, source: saved.yield_ref_source ?? 'saved state', saved: true };
+    else {
+      const fred = await fetchDgs10();
+      ref = fred ?? { pct: s.yieldFallback, source: `fallback ${s.yieldFallback}% (FRED DGS10 unreachable)` };
+    }
+    const nav0 = this.nav.nav;
+    if (ref.saved) {
+      this.nav = this.makeModel({ nav0, yieldRefPct: ref.pct, yieldPct: saved.yield_pct ?? ref.pct });
+    } else {
+      // a new reference: keep the current price (saved, or nav0) and start the yield at the reference
+      const keepPrice = hasSaved && saved.price > 0 ? saved.price : nav0;
+      this.nav = this.makeModel({ nav0: keepPrice, yieldRefPct: ref.pct, yieldPct: ref.pct });
+    }
+    this.yieldSource = ref.source;
+    this.navStart = this.nav.snapshot().price;
+  }
+
+  /** One line describing the fair-value model (banner, README). */
+  modelLine() {
+    const s = this.settings;
+    const f = this.nav.snapshot();
+    if (this.nav.kind === 'flat') return `LBOND fair  flat model: NAV ${f.nav.toFixed(6)}, ${s.navApr}% APR, noise ${s.navNoiseBps} bps (simulation)`;
+    return `LBOND fair  simulated 10Y: yield ${f.yieldPct.toFixed(3)}% (ref ${f.yieldRefPct.toFixed(3)}%, ${this.yieldSource}), vol ${s.yieldVolBpDay} bp/day, ${s.yieldJumpsPerDay} jumps/day ~${s.yieldJumpBp} bp, duration ${s.durationYrs}, price ${f.price.toFixed(5)} in [${s.priceMin}, ${s.priceMax}] (simulation, not market data)`;
+  }
+
   stop(reason) {
     if (this.stopping) return;
     this.stopping = true;
     this.stopReason = reason;
     this.log.warn('bot', `stopping: ${reason}`);
+  }
+
+  /** A component swallowed a failure (logged it and carried on): count it like a thrown error for the loop's backoff. */
+  softFail(name) {
+    this.softFails ??= {};
+    this.softFails[name] = (this.softFails[name] ?? 0) + 1;
   }
 
   sleep(ms) {
@@ -64,6 +128,7 @@ export class Bot {
 
   /** Initial balance snapshot + XLM guard. Throws StopBot when an account is too low to start. */
   async init() {
+    await this.initModel();
     await this.refreshAll();
     for (const [label, b] of Object.entries(this.balances)) {
       this.startBalances[label] = { ...b };
@@ -95,11 +160,33 @@ export class Bot {
       this.poolAdapter = adapter;
       this.log.info('pool', `using pool ${entry.id} ${entry.contract} (ABI ${info.abi}, bin step ${info.step} bps, fee ${info.fee} bps)`);
       await this.warnRetiredPositions(entry.contract);
+      await this.initExtraPools(entry.contract);
       return adapter;
     } catch (e) {
       if (s.pool === 'on') throw e;
       this.log.warn('pool', `pool legs disabled: ${firstLine(e)}`);
       return null;
+    }
+  }
+
+  /** Extra live pools (--pool-extra-ids) where mm_a also keeps an Ask and a Bid position. */
+  async initExtraPools(primaryContract) {
+    const { PoolAdapter, loadPoolEntry } = await import('./pool.mjs');
+    this.extraPools = [];
+    for (const id of this.settings.poolExtraIds.split(',').map((x) => x.trim()).filter(Boolean)) {
+      const entry = loadPoolEntry({ id });
+      if (!entry || entry.contract === primaryContract) {
+        this.log.warn('pool', `extra pool "${id}": not a live LBOND/USDC pool (or the primary one), skipped`);
+        continue;
+      }
+      const a = new PoolAdapter(this, entry);
+      try {
+        await a.init();
+        this.extraPools.push(a);
+        this.log.info('pool', `extra pool ${entry.id} ${entry.contract}: mm_a keeps an Ask and a Bid position there too`);
+      } catch (e) {
+        this.log.warn('pool', `extra pool ${id} disabled: ${firstLine(e)}`);
+      }
     }
   }
 
@@ -122,8 +209,9 @@ export class Bot {
   saveNavState() {
     if (this.nav.timeScale > 1) return; // an accelerated (demo) run must not ratchet the saved NAV
     try {
-      const snap = this.nav.snapshot();
-      saveBotJson({ state: { nav: Number(snap.nav.toFixed(10)), nav_at: new Date().toISOString() } });
+      const st = this.nav.state();
+      if (this.yieldSource) st.yield_ref_source = this.yieldSource;
+      saveBotJson({ state: { ...st, nav_at: new Date().toISOString(), note: 'simulated LBOND fair value (see scripts/bot/lib/nav.mjs); not market data' } });
     } catch {
       /* never fatal */
     }
@@ -141,9 +229,20 @@ export function startLoop(bot, name, fn, intervalFn) {
     while (!bot.stopping) {
       if (!bot.paused[name]) {
         try {
+          const soft0 = bot.softFails?.[name] ?? 0;
           await fn();
-          bot.stats.tick(name, true);
-          consecutive = 0;
+          if ((bot.softFails?.[name] ?? 0) > soft0) {
+            bot.stats.tick(name, false);
+            consecutive += 1;
+            if (consecutive >= 5) {
+              bot.log.warn(name, `${consecutive} consecutive failures: pausing this component for 30s`);
+              await bot.sleep(30_000);
+              consecutive = 0;
+            }
+          } else {
+            bot.stats.tick(name, true);
+            consecutive = 0;
+          }
         } catch (e) {
           if (e instanceof StopBot) {
             if (e.message !== 'stopping') bot.stop(e.message);

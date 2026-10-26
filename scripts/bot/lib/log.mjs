@@ -6,7 +6,7 @@
 // the tx link when there is one. Plain ASCII, no emojis, so it reads the same in a terminal, a log file and a
 // video capture. Where the volume comes from is stated in the startup banner and in bot/README.md.
 
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 export const txUrl = (hash) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
@@ -15,16 +15,34 @@ const C = { reset: '\x1b[0m', dim: '\x1b[2m', red: '\x1b[31m', green: '\x1b[32m'
 
 const hhmmss = (d = new Date()) => d.toTimeString().slice(0, 8);
 
-export function createLogger({ file = null, quiet = false } = {}) {
+/** Size-based rotation: file -> file.1 -> ... -> file.<keep> (the oldest is dropped). */
+function rotate(file, keep) {
+  for (let i = keep - 1; i >= 1; i--) if (existsSync(`${file}.${i}`)) renameSync(`${file}.${i}`, `${file}.${i + 1}`);
+  renameSync(file, `${file}.1`);
+}
+
+export function createLogger({ file = null, quiet = false, console: toConsole = true, maxBytes = 20 * 1024 * 1024, keep = 5 } = {}) {
   const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
   const paint = (c, s) => (useColor ? `${c}${s}${C.reset}` : s);
   if (file) mkdirSync(path.dirname(file), { recursive: true });
+  let size = 0;
+  try {
+    if (file && existsSync(file)) size = statSync(file).size;
+  } catch {
+    size = 0;
+  }
 
   const emit = (line) => {
-    console.log(line);
+    if (toConsole) console.log(line);
     if (file) {
       try {
-        appendFileSync(file, line.replace(/\x1b\[[0-9;]*m/g, '') + '\n');
+        const clean = line.replace(/\x1b\[[0-9;]*m/g, '') + '\n';
+        if (maxBytes > 0 && size + clean.length > maxBytes) {
+          rotate(file, keep);
+          size = 0;
+        }
+        appendFileSync(file, clean);
+        size += clean.length;
       } catch {
         /* logging must never take the bot down */
       }

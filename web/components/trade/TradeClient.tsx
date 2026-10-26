@@ -253,7 +253,6 @@ export function TradeClient() {
                   resetKey={`${market.id}:${TFS[tfIdx].label}`}
                   marketLabel={market.label}
                   marketId={market.id}
-                  orderLines={myLevels}
                   baseCode={market.base.code}
                   headerLeft={viewTabs}
                 />

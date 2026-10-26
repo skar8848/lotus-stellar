@@ -114,6 +114,15 @@ export function LiquidityRangeChart({
         setHover(null);
       }}
     >
+      {/* legend: the two liquidity sources of the depth bars */}
+      <div className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-3 rounded bg-black/60 px-2 py-1 text-[10px] text-mutedfg" data-testid="range-chart-legend">
+        <span className="flex items-center gap-1">
+          <span className="inline-block size-2 rounded-sm bg-[#F3B1CE]" /> Lotus pool liquidity
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block size-2 rounded-sm bg-[#6ea8d8]" /> SDEX liquidity
+        </span>
+      </div>
       <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
         <defs>
           <linearGradient id="lrc-area" x1="0" y1="0" x2="0" y2="1">
@@ -131,9 +140,9 @@ export function LiquidityRangeChart({
         <rect x="800" y="0" width="2" height="1000" fill="#ffffff" fillOpacity="0.08" />
         {bars.map((b, i) => (
           <g key={i}>
-            {b.pool > 0 ? <rect x={1000 - b.pool} y={b.y - b.h / 2} width={b.pool} height={b.h} fill={b.inRange ? "#F3B1CE" : "#6e8ca5"} fillOpacity={b.inRange ? 0.6 : 0.35} /> : null}
+            {b.pool > 0 ? <rect x={1000 - b.pool} y={b.y - b.h / 2} width={b.pool} height={b.h} fill="#F3B1CE" fillOpacity={b.inRange ? 0.7 : 0.35} /> : null}
             {b.sdex > 0 ? (
-              <rect x={1000 - b.base} y={b.y - b.h / 2} width={b.sdex} height={b.h} fill={b.inRange ? "#F3B1CE" : "#6e8ca5"} fillOpacity={b.inRange ? 0.3 : 0.16} />
+              <rect x={1000 - b.base} y={b.y - b.h / 2} width={b.sdex} height={b.h} fill="#6ea8d8" fillOpacity={b.inRange ? 0.6 : 0.3} />
             ) : null}
             {b.mine > 0 ? (
               <rect

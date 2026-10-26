@@ -81,7 +81,6 @@ function defaultRange(side: Side, ref: number, step: number): Range {
 export function NewPosition({
   apr,
   onCreated,
-  onOpenSwap,
   twoWayInst,
   onAdvanced,
 }: {
@@ -318,8 +317,10 @@ export function NewPosition({
           <Button variant="outline" size="sm" className="gap-1.5" onClick={resetAll} data-testid="np-reset">
             <RotateCcw className="size-3.5" /> <span className="hidden sm:inline">Reset</span>
           </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={onOpenSwap} data-testid="np-open-swap">
-            <ArrowLeftRight className="size-3.5" /> Swap on the pool
+          <Button asChild variant="outline" size="sm" className="gap-1.5" data-testid="np-open-swap">
+            <a href="/swap">
+              <ArrowLeftRight className="size-3.5" /> Swap on the pool
+            </a>
           </Button>
           {twoWayInst ? (
             <Button variant="ghost" size="sm" className="text-mutedfg hover:text-white" onClick={onAdvanced} data-testid="twoway-link">

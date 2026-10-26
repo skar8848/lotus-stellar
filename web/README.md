@@ -18,7 +18,7 @@ npm run dev            # http://localhost:3000
 npm run build          # production build (must pass)
 npm start
 npm run lint
-npm run test:unit      # range builder, pool grid, New order routing, live yield rate, faucet (plain node, no browser)
+npm run test:unit      # range builder, pool grid, New order routing, live yield rate, faucet, open-order grouping (plain node, no browser)
 ```
 
 Node 20+ (tested on Node 25). If another `next dev` already holds `web/.next` (Next takes an exclusive lock
@@ -33,7 +33,7 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 | `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), TradingView-style chart (or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit**, plus a "Range orders → Pools" link), bottom tabs (open orders with Cancel, trade history, balances) |
 | `/pools` | **New position** (Uniswap-style add-liquidity flow, see below): pair + side, range on the draggable chart over live depth, amount, then **Choose your strategy** (Lotus pool / + Blend yield / Stellar DEX / + Blend yield) and a review modal. Below it, **Your positions** across the four strategies (claim; locked until filled, then remove; View position / offer on stellar.expert). Header: **Swap on the pool** (lotus-main lite swap in a dialog, with the venue comparison) and **Advanced: two-way position** (`?pool=lbond-usdc-twoway`, the previous builder). `?tab=vault` redirects to `/portfolio#receipts` |
 | `/earn` | Redirect to `/pools` (old vault links with `?strategy=` go to `/portfolio#receipts`) |
-| `/portfolio` | Balances (available vs in offers), open offers, receipts per vault with **Redeem lUSDCb → USDC** (`#receipts`), pool positions, recent activity, USDC-equivalent summary |
+| `/portfolio` | Balances (available vs in offers), open orders (a range order = one row, locked), receipts per vault with **Redeem lUSDCb → USDC** (`#receipts`), pool positions, recent activity, USDC-equivalent summary |
 | `/app` | Redirect to `/trade` |
 | `/api/config` | The merged deployment config as JSON (public keys only), read at request time |
 | `/faucet` | Testnet faucet: Friendbot, add the trustlines (one tx), claim LBOND + USDC + the active receipt. See [Faucet](#faucet-testnet) |
@@ -106,7 +106,24 @@ market bar (mid, spread, 24h high / low) collapse first on narrower screens so i
   clear "not authorized by the issuer" message. For USDC/LBOND it adds the **venue comparison** (Lotus pool quote
   next to the SDEX path, better one marked).
 - **Limit**: one `manageSellOffer` (ask or bid). Warns when the price crosses the book.
-- **Open offers**: from Horizon `/accounts/{id}/offers`, Cancel = `manageSellOffer` with amount 0 and the offer id.
+- **Open orders**: from Horizon `/accounts/{id}/offers`, shown as orders (`lib/offerGroups.ts`, `lib/offerOrigin.ts`).
+  A range order placed by the app (/pools or /swap with a Stellar DEX strategy) is a ladder of `manageSellOffer` ops
+  posted in ONE transaction, so each open offer is mapped to the transaction that created it: the account's recent
+  transactions (`/accounts/{id}/transactions?order=desc&limit=200`, up to 3 pages back, then only newer ones; cached in
+  memory) are decoded with stellar-sdk (`result_xdr` → `manageSellOfferResult` / `manageBuyOfferResult` → success →
+  `manageOfferCreated` offer id; `envelope_xdr` → initial amount per op; later ops on an id with amount 0 = cancelled).
+  Offers created by the same transaction on the same market + side are one **range row**: price range (min–max),
+  levels (open / created), remaining size and total, filled % (1 − current / initial amounts of the levels the
+  transaction created, cancelled levels excluded; "-" if an offer was later updated), the "earns" tag for receipt
+  books, created time and the creating tx on stellar.expert; it expands to its offers (each with its offer link).
+  An offer whose creating transaction is not found (older than the scanned window, or posted elsewhere) is a normal
+  single row. **Cancel range** = one transaction cancelling every open offer of the range (≤ 100 ops); individual
+  Cancel stays in the expanded view; Cancel = `manageSellOffer` with amount 0 and the offer id.
+  **Lock rule**: a range quoted in a Lotus receipt (the "Stellar DEX + Blend yield" strategy, e.g. LBOND/lUSDCb) is
+  locked until filled: no Cancel range, no per-offer Cancel, a disabled "Early redemption · soon" instead (same as
+  /pools), and "Cancel N" skips it. This lock is enforced by the app UI only: SDEX offers belong to the user's
+  account, so another wallet or tool could still cancel them. Plain limit orders and USDC-quoted ranges keep Cancel.
+  /portfolio shows the same table locked (no Cancel at all).
 - **Trade history**: one row per user operation (`groupAccountTrades` in `lib/book.ts`). Horizon returns one trade
   per crossed offer, so a path payment `USDC > lUSDCb > LBOND` is two trades sharing the operation id; they are
   grouped by (operation, the account's own offer id on the trade), which merges the hops of a swap (the taker side

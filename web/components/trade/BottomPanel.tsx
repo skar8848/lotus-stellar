@@ -14,7 +14,7 @@ import { assetKey, fetchOperationTxHash, fmt, toAssetRef, type AssetRef, type Ho
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { AssetLink, Empty, ExplorerLink, TokenIcon } from "@/components/common";
-import { OpenOffers } from "./OpenOffers";
+import { OpenOffers, useOrderRows } from "./OpenOffers";
 
 type BottomTab = "orders" | "history" | "balances";
 
@@ -68,7 +68,9 @@ export function BottomPanel({
     };
   }, [maxHeight]);
 
-  const nOrders = offers.data?.length ?? 0;
+  // one range order (a ladder posted in one transaction) counts as one order
+  const { rows: orderRows } = useOrderRows(markets, offers.data, wallet.address);
+  const nOrders = orderRows.length;
   const tabs: { id: BottomTab; label: string }[] = [
     { id: "orders", label: wallet.address && nOrders > 0 ? `Open orders (${nOrders})` : "Open orders" },
     { id: "history", label: "Trade history" },

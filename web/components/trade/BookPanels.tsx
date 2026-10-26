@@ -17,6 +17,7 @@ export function OrderBookTable({
   rows = 30,
   priceDp = 4,
   onPick,
+  mine,
 }: {
   book: OrderBook | null;
   baseCode: string;
@@ -24,6 +25,8 @@ export function OrderBookTable({
   rows?: number;
   priceDp?: number;
   onPick?: (price: string) => void;
+  /** prices (quote per base) of the connected account's own offers, per side: a dot marks those levels */
+  mine?: { ask: number[]; bid: number[] };
 }) {
   const allAsks = useMemo(() => bookRows(book?.asks ?? [], "ask", 200), [book]);
   const allBids = useMemo(() => bookRows(book?.bids ?? [], "bid", 200), [book]);
@@ -48,6 +51,7 @@ export function OrderBookTable({
 
   const Row = ({ r, side, i }: { r: BookRow; side: "bid" | "ask"; i: number }) => {
     const inSweep = hover !== null && hover.side === side && i <= hover.i;
+    const isMine = (mine?.[side] ?? []).some((p) => Math.abs(p - r.price) <= Math.max(1e-7, r.price * 1e-6));
     return (
       <button
         type="button"
@@ -62,6 +66,9 @@ export function OrderBookTable({
           hover?.side === side && hover.i === i ? "outline outline-1 -outline-offset-1 outline-white/15" : "",
         )}
       >
+        {isMine ? (
+          <span aria-label="your order" title="Your order at this price" data-testid="book-mine" className={cn("absolute left-1 top-1/2 z-10 size-1.5 -translate-y-1/2 rounded-full", side === "bid" ? "bg-green" : "bg-red")} />
+        ) : null}
         {/* cumulative depth (light) + this level (darker) */}
         <span aria-hidden className={cn("absolute inset-y-0 right-0 transition-all duration-300", side === "bid" ? "bg-green/8" : "bg-red/8")} style={{ width: `${Math.min(100, (r.cum / maxCum) * 100)}%` }} />
         <span aria-hidden className={cn("absolute inset-y-0 right-0 transition-all duration-300", side === "bid" ? "bg-green/20" : "bg-red/20")} style={{ width: `${Math.min(100, (r.size / maxCum) * 100)}%` }} />

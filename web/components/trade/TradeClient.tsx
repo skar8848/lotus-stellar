@@ -13,7 +13,7 @@ import { bestPrices, groupAccountTrades, midPrice } from "@/lib/book";
 import { useConfig } from "@/lib/config-context";
 import { usePolling } from "@/lib/hooks";
 import { buildMarkets, pickMarket } from "@/lib/markets";
-import { fetchAccountTrades, fetchCandles, fetchOffers, fetchOrderBook, fetchTrades } from "@/lib/stellar";
+import { assetKey, fetchAccountTrades, fetchCandles, fetchOffers, fetchOrderBook, fetchTrades, toAssetRef } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { DepthChart, OrderBookTable, RecentTrades } from "./BookPanels";
@@ -120,6 +120,19 @@ export function TradeClient() {
   const dayCandles = usePolling(dayFn, 60000, ready);
   const offersFn = useCallback(() => (wallet.address ? fetchOffers(horizon, wallet.address) : Promise.resolve([])), [horizon, wallet.address]);
   const offers = usePolling(offersFn, 8000, !!wallet.address);
+  // price levels of my own offers on this market (asks sell the base; bids sell the quote, price inverted)
+  const myLevels = useMemo(() => {
+    const out = { ask: [] as number[], bid: [] as number[] };
+    if (!market) return out;
+    for (const o of offers.data ?? []) {
+      const sell = assetKey(toAssetRef(o.selling));
+      const buy = assetKey(toAssetRef(o.buying));
+      const p = Number(o.price);
+      if (sell === assetKey(market.base) && buy === assetKey(market.quote)) out.ask.push(p);
+      else if (sell === assetKey(market.quote) && buy === assetKey(market.base) && p > 0) out.bid.push(1 / p);
+    }
+    return out;
+  }, [offers.data, market]);
   // the connected account's fills, one row per operation (a routed swap is one row): bottom Trade history,
   // and its routed swaps of this market are merged into the Trades tab
   const me = wallet.address;
@@ -287,6 +300,7 @@ export function TradeClient() {
               {midTab === "book" ? (
                 <OrderBookTable
                   book={bk}
+                  mine={myLevels}
                   baseCode={market.base.code}
                   quoteCode={market.quote.code}
                   onPick={(price) => {

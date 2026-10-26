@@ -254,7 +254,9 @@ export function PriceChart({
     });
     const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.86, bottom: 0 }, visible: false });
-    const line = (color: string) => chart.addSeries(LineSeries, { color, lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    // same price format as the candles: the first series on the right scale sets its tick step (default 0.01 = one label)
+    const line = (color: string) =>
+      chart.addSeries(LineSeries, { color, lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, priceFormat: { type: "price", precision: 4, minMove: 0.0001 } });
     chartRef.current = chart;
     volRef.current = vol;
     ema9Ref.current = line(EMA9);

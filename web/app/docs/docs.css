@@ -1,0 +1,137 @@
+/* Typography for the rendered Markdown of /docs (lib/markdown.ts output). Lotus tokens only. */
+.lotus-prose {
+  color: var(--foreground);
+  font-size: 0.95rem;
+  line-height: 1.75;
+}
+.lotus-prose > * + * {
+  margin-top: 1rem;
+}
+.lotus-prose h2 {
+  margin-top: 2.75rem;
+  padding-top: 0.25rem;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+  scroll-margin-top: 6rem;
+}
+.lotus-prose h3 {
+  margin-top: 2rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+  scroll-margin-top: 6rem;
+}
+.lotus-prose h4 {
+  margin-top: 1.5rem;
+  font-weight: 600;
+  color: #fff;
+}
+.lotus-prose h2:first-child {
+  margin-top: 0;
+}
+.lotus-prose a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+.lotus-prose a:hover {
+  text-decoration-color: var(--primary);
+}
+.lotus-prose strong {
+  color: #fff;
+  font-weight: 600;
+}
+.lotus-prose code {
+  border-radius: 0.3rem;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.1rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.lotus-prose a code {
+  color: var(--primary);
+}
+.lotus-prose pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 1rem 1.1rem;
+  line-height: 1.6;
+}
+.lotus-prose pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.8rem;
+  color: #d5dde6;
+  overflow-wrap: normal;
+  white-space: pre;
+}
+.lotus-prose ul,
+.lotus-prose ol {
+  padding-left: 1.4rem;
+}
+.lotus-prose ul {
+  list-style: disc;
+}
+.lotus-prose ol {
+  list-style: decimal;
+}
+.lotus-prose li + li {
+  margin-top: 0.35rem;
+}
+.lotus-prose li > ul,
+.lotus-prose li > ol,
+.lotus-prose li > p {
+  margin-top: 0.35rem;
+}
+.lotus-prose li::marker {
+  color: var(--muted-foreground);
+}
+.lotus-prose blockquote {
+  border-left: 2px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 0.6rem 1rem;
+  color: var(--foreground);
+}
+.lotus-prose hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+.lotus-prose .table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.lotus-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.lotus-prose th {
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+  font-weight: 600;
+  color: #fff;
+}
+.lotus-prose th,
+.lotus-prose td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.55rem 0.75rem;
+  vertical-align: top;
+}
+.lotus-prose tr:last-child td {
+  border-bottom: 0;
+}
+.lotus-prose td code {
+  overflow-wrap: anywhere;
+}

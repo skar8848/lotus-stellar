@@ -38,6 +38,10 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 | `/api/config` | The merged deployment config as JSON (public keys only), read at request time |
 | `/faucet` | Testnet faucet: Friendbot, add the trustlines (one tx), claim LBOND + USDC + the active receipt. See [Faucet](#faucet-testnet) |
 | `/api/faucet` | `GET`: faucet status (public info). `POST {address}`: server-side funding of one address |
+| `/docs`, `/docs/<slug>` | Docs for people and agents, rendered from `content/docs/*.md` (`lib/markdown.ts`, `lib/docs*.ts`); contract tables filled from the config at request time |
+| `/docs/<slug>.md` | Raw Markdown of a docs page (rewrite to `/api/docs/<slug>` in `next.config.ts`) |
+| `/llms.txt`, `/llms-full.txt` | llmstxt.org index and every docs page concatenated, generated from the same Markdown |
+| `/api/health` | JSON deployment check: RPC, Horizon, every contract instance + a simulated read (`lib/health.ts`); 503 when RPC or Horizon is down |
 
 Vocabulary: the **Lotus pool** is the `lotus_pool` range pool (directional liquidity on a price grid). The
 **Lotus vault** is the `lotus_vault` wrapper (USDC to a DeFindex vault, receipt token `lUSDC`, a classic asset

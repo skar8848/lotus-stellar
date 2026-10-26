@@ -1,27 +1,12 @@
 import Link from "next/link";
 import { HeroVideo } from "@/components/landing/HeroVideo";
-import { HowDiagram } from "@/components/landing/HowDiagram";
+import { CoinStory } from "@/components/landing/CoinStory";
 import { loadConfig } from "@/lib/config";
 
 // the deployment files decide which receipt is live (lUSDC on the idle v1 vault, lUSDCb on the Blend-backed v2)
 export const dynamic = "force-dynamic";
 
 type Codes = { r: string; base: string; quote: string };
-
-const steps = ({ r, base, quote }: Codes) => [
-  {
-    title: "Create one order",
-    body: `Sell ${base} across a price range, or leave ${quote} waiting to buy it. Swap Pro sets a range, Limit sets one price; Pools builds the same order over the live chart.`,
-  },
-  {
-    title: "Choose where it waits",
-    body: "Lotus pool: one directional position in the Soroban range pool. Stellar DEX: a ladder of SDEX offers, one per bin, at the same prices. Chosen once, at creation.",
-  },
-  {
-    title: "Earn yield, or not",
-    body: `With yield on, the ${quote} leg goes through DeFindex into Blend: on the pool through the vault-backed instance, on the SDEX by quoting in ${r}, minted 1:1 by the Lotus vault and still earning inside open offers.`,
-  },
-];
 
 const why = ({ r, base, quote }: Codes) => [
   {
@@ -53,9 +38,9 @@ export default function Landing() {
   const cfg = loadConfig();
   const receipt = cfg.receipt.code;
   const codes: Codes = { r: receipt, base: cfg.rwa.code, quote: cfg.underlying.code };
-  // real Blend interest only when the active receipt vault is a live strategy (v2); v1 stays idle
-  const liveYield = cfg.strategies.some((s) => s.status === "live" && s.lotusVault === cfg.lotusVault);
-  const STEPS = steps(codes);
+  // the idle receipt (v1) and the Blend-backed one (v2), named from the strategies file
+  const idle = cfg.strategies.find((s) => s.status === "idle")?.receipt.code ?? "lUSDC";
+  const earning = cfg.strategies.find((s) => s.status === "live")?.receipt.code ?? receipt;
   const WHY = why(codes);
   const TRY = try_(codes);
   return (
@@ -122,31 +107,7 @@ export default function Landing() {
       </section>
 
       {/* ───────────────────────────  HOW IT WORKS  ─────────────────────── */}
-      <section id="how" className="scroll-mt-24 border-t border-white/[0.06] px-4 py-20 sm:px-10 lg:py-28">
-        <div className="mx-auto max-w-3xl text-center">
-          <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">How it works</span>
-          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">One order. Two places to wait.</h2>
-        </div>
-
-        <div className="mx-auto mt-12 max-w-4xl">
-          <HowDiagram receipt={receipt} base={codes.base} quote={codes.quote} />
-          <p className="mx-auto mt-4 max-w-2xl text-center text-xs leading-relaxed text-white/35">
-            {liveYield
-              ? `Yield is real Blend testnet interest, through our DeFindex vault. The rate follows Blend's testnet utilization: observed, not a forecast. Stellar testnet only.`
-              : "Blend lending applies when the strategy allocates to it. The active testnet vault keeps its funds idle in DeFindex, so no lending interest is assumed. Stellar testnet only."}
-          </p>
-        </div>
-
-        <div className="mx-auto mt-16 grid max-w-4xl grid-cols-1 gap-y-12 text-center sm:grid-cols-3 sm:gap-x-10">
-          {STEPS.map((s, i) => (
-            <div key={s.title} className="flex flex-col items-center">
-              <span className="font-[family-name:var(--font-audiowide)] text-sm text-white/30">0{i + 1}</span>
-              <h3 className="mt-2 text-lg font-medium text-white">{s.title}</h3>
-              <p className="mt-2 text-[14px] leading-relaxed text-white/45">{s.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      <CoinStory base={codes.base} quote={codes.quote} idle={idle} earning={earning} />
 
       {/* ───────────────────────────  WHY STELLAR  ──────────────────────── */}
       <section id="why" className="scroll-mt-24 border-t border-white/[0.06] px-4 py-20 sm:px-10 lg:py-28">

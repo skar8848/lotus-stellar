@@ -1,17 +1,21 @@
 "use client";
 
-// Toolbar primitives of the /trade chart (Hyperliquid / TradingView look: slate panel, grey icons, teal active state).
+// Toolbar primitives of the /trade chart (TradingView layout on the Lotus near-black card: neutral greys, teal active state).
 
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export const HL = {
-  bg: "#0f1a1f",
-  panel: "#0f1a1f",
+  // the app's card colour (lotus-main /pro card: --card #0a0a0a), neutral greys, no slate / green tint
+  bg: "#0a0a0a",
+  panel: "#0a0a0a",
+  menu: "#161616",
+  cross: "#6b6b6b",
+  crossLabel: "#262626",
   border: "rgba(255,255,255,0.07)",
   grid: "rgba(255,255,255,0.045)",
-  text: "#949e9c",
+  text: "#8f8f8f",
   bright: "#d1d4dc",
   accent: "#50d2c1", // Hyperliquid teal (active tools / intervals)
   up: "#26a69a",
@@ -114,7 +118,7 @@ export function Menu({
         <div
           role="menu"
           className={cn("absolute top-8 z-40 rounded-md border py-1 shadow-xl shadow-black/50", align === "right" ? "right-0" : "left-0")}
-          style={{ width, background: "#1b2429", borderColor: HL.border }}
+          style={{ width, background: HL.menu, borderColor: HL.border }}
         >
           {children(() => setOpen(false))}
         </div>

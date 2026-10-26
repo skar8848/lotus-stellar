@@ -260,7 +260,7 @@ function line(c: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y
 function dot(c: CanvasRenderingContext2D, x: number, y: number) {
   c.save();
   c.setLineDash([]);
-  c.fillStyle = "#0f1a1f";
+  c.fillStyle = "#0a0a0a";
   c.beginPath();
   c.arc(x, y, 3.5, 0, Math.PI * 2);
   c.fill();

@@ -25,21 +25,16 @@ import { bestPrices } from "@/lib/book";
 import { PROXIMITY_MIN_BINS, binsBelowReference, conservativeReference, directionBounds, rangeForYield, referenceFor, type BookTop } from "@/lib/orderRoute";
 import { getPoolClient } from "@/lib/pool";
 import { MAX_BIN, MAX_POSITION_BINS, MIN_BIN, binForPrice, planPosition, priceAt, type Shape, type Side } from "@/lib/poolGrid";
-import { assetReady, fetchCandles, fetchOrderBook, fmt, type AssetRef } from "@/lib/stellar";
+import { assetReady, fetchOrderBook, fmt, type AssetRef } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
-import { LiquidityRangeChart, type DepthBin } from "./LiquidityRangeChart";
+import { LiquidityLegend, PriceChart } from "@/components/trade/PriceChart";
+import type { DepthBin } from "@/components/trade/chart/rangeLayer";
+import { useProCandles } from "@/components/trade/chart/useProCandles";
 import { ReviewDialog } from "./ReviewDialog";
 import { StrategyCards } from "./StrategyCards";
 import type { LiveApr } from "./useBlendApr";
 import { STRATEGIES, crossText, directionalPools, useOrderDestinations, type StrategyId } from "./useOrder";
-
-const TIMEFRAMES = [
-  { label: "1H", res: 60_000, limit: 60 },
-  { label: "1D", res: 900_000, limit: 96 },
-  { label: "1W", res: 3_600_000, limit: 168 },
-  { label: "1M", res: 86_400_000, limit: 30 },
-];
 
 const SHAPES: { value: Shape; label: string; title: string }[] = [
   { value: "uniform", label: "Even", title: "Same size in every bin" },
@@ -107,7 +102,6 @@ export function NewPosition({
   const [range, setRange] = useState<Range | null>(null);
   const [amount, setAmount] = useState("");
   const [shape, setShape] = useState<Shape>("uniform");
-  const [tf, setTf] = useState(1);
   const [choice, setChoice] = useState<StrategyId | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [clampNote, setClampNote] = useState<string | null>(null);
@@ -136,14 +130,7 @@ export function NewPosition({
   }, [config.horizon, base, quote, receipt]);
   const booksQ = usePolling(booksFn, 10000, true);
 
-  const t = TIMEFRAMES[tf];
-  const candlesFn = useCallback(async () => {
-    const usdc = await fetchCandles(config.horizon, base, quote, t.res, t.limit).catch(() => []);
-    if (usdc.length > 1) return { closes: usdc.map((c) => c.close), market: `${base.code}/${quote.code}` };
-    const r = assetReady(receipt) ? await fetchCandles(config.horizon, base, receipt, t.res, t.limit).catch(() => []) : [];
-    return { closes: r.map((c) => c.close), market: `${base.code}/${receipt.code}` };
-  }, [config.horizon, base, quote, receipt, t.res, t.limit]);
-  const candlesQ = usePolling(candlesFn, 30000, true);
+  const candles = useProCandles({ horizon: config.horizon, base, quote, receipt, preferReceipt: choice === "sdex-yield", enabled: wizard === 2 });
 
   // best bid / ask of every book a strategy can target: each pool instance's own bins, SDEX USDC and receipt books
   const market = useMemo(() => {
@@ -476,25 +463,25 @@ export function NewPosition({
                   </span>
                 </div>
 
-                <LiquidityRangeChart line={candlesQ.data?.closes ?? []} depth={depthBins} min={eff.lo} max={eff.hi} current={refPrice} stepBps={step} onChange={setLoHi} unit={base.code} />
-
-                <div className="flex flex-wrap items-center gap-1">
-                  {TIMEFRAMES.map((x, i) => (
-                    <button
-                      key={x.label}
-                      onClick={() => setTf(i)}
-                      className={cn("rounded-md px-2.5 py-1 text-xs font-medium transition", tf === i ? "bg-white/10 text-white" : "text-mutedfg hover:text-white")}
-                    >
-                      {x.label}
-                    </button>
-                  ))}
-                  <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-mutedfg">
-                    <Legend c="#8fb6c8" l={`${candlesQ.data?.market ?? "SDEX"} trades`} />
-                    <Legend c="rgba(110,140,165,0.7)" l="Lotus pool bins" />
-                    <Legend c="rgba(110,140,165,0.35)" l="SDEX offers" />
-                    <Legend c="#F3B1CE" l="your order" />
-                  </span>
+                <div className="overflow-hidden rounded-lg border border-line">
+                  <PriceChart
+                    className="h-[460px]"
+                    mode="pro"
+                    candles={candles.candles}
+                    timeframes={candles.timeframes}
+                    tfIdx={candles.tfIdx}
+                    onTf={candles.setTfIdx}
+                    resetKey={`${candles.marketId}:${candles.timeframes[candles.tfIdx].label}`}
+                    marketLabel={candles.marketLabel}
+                    marketId={candles.marketId}
+                    baseCode={base.code}
+                    range={{ min: eff.lo, max: eff.hi }}
+                    onRangeChange={setLoHi}
+                    refPrice={refPrice}
+                    liquidity={{ bins: depthBins, stepBps: step, unit: base.code }}
+                  />
                 </div>
+                <LiquidityLegend mine={amountTyped && plan.ok} className="-mt-2" />
 
                 <div>
                   <div className="mb-2 text-sm font-medium">Range presets</div>
@@ -661,15 +648,6 @@ export function NewPosition({
         />
       ) : null}
     </div>
-  );
-}
-
-function Legend({ c, l }: { c: string; l: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span className="inline-block size-2.5 rounded-sm" style={{ background: c }} />
-      {l}
-    </span>
   );
 }
 

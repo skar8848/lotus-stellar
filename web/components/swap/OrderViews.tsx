@@ -12,18 +12,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TokenIcon } from "@/components/common";
-import { LiquidityRangeChart } from "@/components/pools/LiquidityRangeChart";
+import { LiquidityLegend, PriceChart } from "@/components/trade/PriceChart";
+import { useProCandles } from "@/components/trade/chart/useProCandles";
 import { ReviewDialog } from "@/components/pools/ReviewDialog";
 import { StrategyCards } from "@/components/pools/StrategyCards";
 import type { LiveApr } from "@/components/pools/useBlendApr";
 import type { StrategyId } from "@/components/pools/useOrder";
 import { useAssetAccess } from "@/components/trade/access";
 import { fromStroops } from "@/lib/amount";
+import { useConfig } from "@/lib/config-context";
 import { fmt, type AssetRef } from "@/lib/stellar";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet";
 import { NumberInput, TokenButton, fmtBalance, fmtNum } from "./parts";
-import { TIMEFRAMES, type RangeOrder } from "./useRangeOrder";
+import type { RangeOrder } from "./useRangeOrder";
 
 // the lite / pro "+5% +10% +25% +50%" presets, scaled to the pool grid (10 bps bins, at most 64 bins a position)
 const PRESETS = [0.5, 1, 2.5, 5];
@@ -413,52 +415,55 @@ function OrderNote({ o }: { o: RangeOrder }) {
   return null;
 }
 
-/** LimitScreen ChartPanel on the /pools liquidity range chart (pool bins + SDEX books, draggable range). */
+/** LimitScreen ChartPanel on the /trade chart in pro mode (candles + range handles + pool / SDEX liquidity). */
 export function ChartPanel({ o, showRange }: { o: RangeOrder; showRange: boolean }) {
+  const config = useConfig();
+  const c = useProCandles({ horizon: config.horizon, base: o.base, quote: o.quote, receipt: o.receipt, preferReceipt: o.chosen?.id === "sdex-yield", enabled: o.ready });
   return (
     <div className="card flex flex-col p-5" data-testid="pro-chart">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-            <span className="flex -space-x-1.5">
-              <TokenIcon code={o.base.code} size={20} />
-              <TokenIcon code={o.quote.code} size={20} />
-            </span>
-            {o.base.code} <span className="text-mutedfg">/ {o.quote.code}</span>
-            {showRange && o.inRangeShare != null && (
-              <Badge variant="outline" className="text-[10px] text-primary">
-                {o.inRangeShare}% liquidity in range
-              </Badge>
-            )}
-          </div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums">
-            {o.refPrice > 0 ? `${fmtNum(o.refPrice)} ${o.quote.code}` : o.live ? "-" : <Loader2 className="size-5 animate-spin text-mutedfg" />}
-          </div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+          <span className="flex -space-x-1.5">
+            <TokenIcon code={o.base.code} size={20} />
+            <TokenIcon code={o.quote.code} size={20} />
+          </span>
+          {o.base.code} <span className="text-mutedfg">/ {o.quote.code}</span>
+          {showRange && o.inRangeShare != null && (
+            <Badge variant="outline" className="text-[10px] text-primary">
+              {o.inRangeShare}% liquidity in range
+            </Badge>
+          )}
         </div>
-        <div className="flex items-center gap-1">
-          {TIMEFRAMES.map((t, i) => (
-            <button key={t.label} onClick={() => o.setTf(i)} className={cn("rounded-md px-2.5 py-1 text-xs font-medium transition", o.tf === i ? "bg-white/10 text-white" : "text-mutedfg hover:text-white")}>
-              {t.label}
-            </button>
-          ))}
+        <div className="mt-1 text-2xl font-semibold tabular-nums">
+          {o.refPrice > 0 ? `${fmtNum(o.refPrice)} ${o.quote.code}` : o.live ? "-" : <Loader2 className="size-5 animate-spin text-mutedfg" />}
         </div>
       </div>
-      <div className="mt-4 flex-1">
-        <LiquidityRangeChart
-          line={o.candles?.closes ?? []}
-          depth={o.depthBins}
-          min={showRange ? o.lo : o.refPrice}
-          max={showRange ? o.hi : o.refPrice}
-          current={o.refPrice}
-          stepBps={o.step}
-          onChange={showRange ? o.setLoHi : () => {}}
-          unit={o.base.code}
-          height={420}
+      <div className="mt-4 flex-1 overflow-hidden rounded-lg border border-line">
+        <PriceChart
+          className="h-[480px]"
+          mode="pro"
+          candles={c.candles}
+          timeframes={c.timeframes}
+          tfIdx={c.tfIdx}
+          onTf={c.setTfIdx}
+          resetKey={`${c.marketId}:${c.timeframes[c.tfIdx].label}`}
+          marketLabel={c.marketLabel}
+          marketId={c.marketId}
+          baseCode={o.base.code}
+          range={showRange && o.lo > 0 && o.hi > 0 ? { min: o.lo, max: o.hi } : null}
+          onRangeChange={showRange ? o.setLoHi : undefined}
+          refPrice={o.refPrice}
+          liquidity={{ bins: o.depthBins, stepBps: o.step, unit: o.base.code }}
         />
       </div>
-      <p className="mt-2 text-[11px] text-mutedfg">
-        Drag the <span className="text-primary">Start</span> / <span className="text-primary">End</span> handles to set your range — inventory fills bin by bin as the price moves through it.
-        {` The right panel shows live depth: Lotus pool bins and SDEX offers (${o.candles?.market ?? `${o.base.code}/${o.quote.code}`} trades on the left), on the same price axis.`}
+      <LiquidityLegend mine={showRange && o.amountTyped} className="mt-2" />
+      <p className="mt-1.5 text-[11px] text-mutedfg">
+        {showRange ? (
+          <>
+            Drag the <span className="text-primary">Min</span> / <span className="text-primary">Max</span> handles to set your range: inventory fills bin by bin as the price moves through it.{" "}
+          </>
+        ) : null}
+        {`The right panel shows live depth per pool bin: Lotus pool and SDEX liquidity, on the same price axis as the ${c.marketLabel} candles.`}
       </p>
     </div>
   );

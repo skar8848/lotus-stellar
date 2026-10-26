@@ -13,18 +13,10 @@ import { bestPrices } from "@/lib/book";
 import { conservativeReference, referenceFor, type BookTop } from "@/lib/orderRoute";
 import { getPoolClient } from "@/lib/pool";
 import { MAX_BIN, MIN_BIN, binForPrice, planPosition, priceAt, type Side } from "@/lib/poolGrid";
-import { assetReady, fetchCandles, fetchOrderBook, type AssetRef } from "@/lib/stellar";
+import { assetReady, fetchOrderBook, type AssetRef } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import type { DepthBin } from "@/components/pools/LiquidityRangeChart";
+import type { DepthBin } from "@/components/trade/chart/rangeLayer";
 import { STRATEGIES, directionalPools, useOrderDestinations, type StrategyId } from "@/components/pools/useOrder";
-
-// the /pools chart timeframes (Horizon trade_aggregations resolutions)
-export const TIMEFRAMES = [
-  { label: "1H", res: 60_000, limit: 60 },
-  { label: "1D", res: 900_000, limit: 96 },
-  { label: "1W", res: 3_600_000, limit: 168 },
-  { label: "1M", res: 86_400_000, limit: 30 },
-];
 
 export const snapPrice = (p: number, step: number) => Number(priceAt(binForPrice(p, step), step)) / 1e7;
 const fixed = (n: number) => n.toFixed(7);
@@ -45,7 +37,6 @@ export function useRangeOrder({ sideFromSell, kind, enabled }: { sideFromSell: S
   const receipt: AssetRef = config.receipt;
   const side = sideFromSell;
 
-  const [tf, setTf] = useState(1);
   // start / end in QUOTE per BASE; null = follow the reference price
   const [start, setStart] = useState<number | null>(null);
   const [endMode, setEndMode] = useState<"pct" | "abs">("pct");
@@ -78,15 +69,6 @@ export function useRangeOrder({ sideFromSell, kind, enabled }: { sideFromSell: S
     return { receipt: rb, usdc: ub };
   }, [config.horizon, base, quote, receipt]);
   const booksQ = usePolling(booksFn, 10000, enabled && !!main);
-
-  const t = TIMEFRAMES[tf];
-  const candlesFn = useCallback(async () => {
-    const usdc = await fetchCandles(config.horizon, base, quote, t.res, t.limit).catch(() => []);
-    if (usdc.length > 1) return { closes: usdc.map((c) => c.close), market: `${base.code}/${quote.code}` };
-    const r = assetReady(receipt) ? await fetchCandles(config.horizon, base, receipt, t.res, t.limit).catch(() => []) : [];
-    return { closes: r.map((c) => c.close), market: `${base.code}/${receipt.code}` };
-  }, [config.horizon, base, quote, receipt, t.res, t.limit]);
-  const candlesQ = usePolling(candlesFn, 30000, enabled && !!main && kind === "range");
 
   const market = useMemo(() => {
     const poolTop = (inst: PoolInstance | null): BookTop => {
@@ -219,9 +201,6 @@ export function useRangeOrder({ sideFromSell, kind, enabled }: { sideFromSell: S
     receipt,
     side,
     step,
-    tf,
-    setTf,
-    candles: candlesQ.data,
     ref,
     refPrice,
     refs,

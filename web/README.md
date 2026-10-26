@@ -70,8 +70,8 @@ strategy picker), `useRangeOrder.ts`, `parts.tsx`.
 - **Limit** (Lite): Sell / Buy cards, "When 1 LBOND is worth" (Market, ±0.5 / 1 / 2.5 / 5 % presets, spot), one price
   = one bin; Expiry shows "Until filled" (Lotus orders have no expiry, so the original 1 day / 1 week / ... row is not
   faked); then the strategy picker and **Confirm**.
-- **Range** (Pro): the chart panel (the /pools `LiquidityRangeChart`: SDEX trades, pool bins + SDEX offers, draggable
-  range, timeframes, "x% liquidity in range") next to Selling / Buying, Start price + Range end (% or price), end
+- **Range** (Pro): the chart panel (the /trade `PriceChart` in `mode="pro"`, see [Pro range chart](#pro-range-chart):
+  candles, pool bins + SDEX offers, draggable range, "x% liquidity in range") next to Selling / Buying, Start price + Range end (% or price), end
   presets, strategy picker, **Get started**.
 - Limit and Range are the /pools New position order: `useRangeOrder` reads the same live data (every live pool's
   depth, SDEX books, reference price per strategy) and builds the plan with `planPosition`, the four destinations
@@ -92,7 +92,7 @@ Range orders are not on /trade: they are placed from /pools (the order panel lin
 **Chart** (`components/trade/PriceChart.tsx`, helpers in `components/trade/chart/`): styled after Hyperliquid's chart
 (which is TradingView Advanced Charts), drawn with TradingView's open-source `lightweight-charts` on our own data
 (Horizon `/trade_aggregations` of the selected market); no licensed TradingView library, and the embed widget only
-plots TradingView's own feeds, so it cannot show testnet SDEX assets. Slate background, teal / red candles, dashed
+plots TradingView's own feeds, so it cannot show testnet SDEX assets. Near-black card background (#0a0a0a, as the lotus-main /pro card) with neutral grey grid and axes, teal / red candles, dashed
 last-price line with its tag on the right axis, thin-space thousands. Top toolbar: Chart / Depth, 5m 1h D plus a
 dropdown with every Horizon resolution (1m 5m 15m 1h 1D 1W), chart type menu (candles / bars / line / area),
 `ƒx Indicators` (Volume, EMA 9, EMA 21, daily VWAP), snapshot (`takeScreenshot()` + legend, downloaded as PNG), full
@@ -110,6 +110,18 @@ flat grey candles at the previous close with zero volume and a "no trades" tag i
 Hovering an order-book row highlights it and every level up to the spread, with a summary (levels, size, total, average).
 The market selector menu is portalled to `<body>`, so the market bar can never clip it; the low-value stats of the
 market bar (mid, spread, 24h high / low) collapse first on narrower screens so it never scrolls at 1280px and up.
+
+#### Pro range chart
+
+The range order views (/swap?mode=pro, /pools New position step 2) use the same `PriceChart` with `mode="pro"`:
+same toolbar, intervals, indicators, drawings, legend and bottom bar, on the order's SDEX market
+(`chart/useProCandles.ts`), plus one series primitive (`chart/rangeLayer.ts`): pink **Min / Max** handles (line, grip,
+axis tag) with the shaded band between them, the reference price (dashed, grey axis tag) and the liquidity histogram
+in the right ~20% of the pane (per pool bin: Lotus pool in pink `#F3B1CE`, SDEX in blue `#6ea8d8`, your order
+outlined; hover tooltip with price, pool, SDEX, yours). Pressing a handle drags it instead of panning (capture-phase
+pointer listeners); the new range goes to the caller's `onRangeChange`, which snaps to the bin grid and applies the
+direction rule. The autoscale always includes the range and the reference price. The legend row ("Lotus pool
+liquidity · SDEX liquidity · your order") is `LiquidityLegend`, rendered under the chart. No open-order lines in Pro.
 
 - **Swap**: pay asset to receive asset with one `pathPaymentStrictSend`, quoted from Horizon `/paths/strict-send`
   (route, effective price, min received with slippage). `USDC > lUSDC > LBOND` is one transaction. Shows the trustline
@@ -151,19 +163,19 @@ One page, laid out like the Uniswap v3/v4 "New position" wizard of the previous 
 `web/app/pro1/page.tsx`): breadcrumb, title with **Reset**, a stepper card on the left, the step card on the right.
 The receipt / vault is not a page of its own any more: depositing USDC for the receipt is how **Stellar DEX + Blend
 yield** works, and held receipts are redeemed from /portfolio. Files: `components/pools/NewPosition.tsx` (wizard),
-`LiquidityRangeChart.tsx` (chart), `StrategyCards.tsx`, `ReviewDialog.tsx`, `useOrder.ts` (evaluation of the four
+`StrategyCards.tsx`, `ReviewDialog.tsx`, `useOrder.ts` (evaluation of the four
 destinations), `YourPositions.tsx` + `positionsModel.ts`, `useBlendApr.ts` + `lib/yieldRate.ts`.
 
 1. **Select pair and side**: LBOND / USDC, and **Sell LBOND** (Ask: sold as the price rises) or **Buy LBOND with
    USDC** (Bid: buys as the price falls). Directional range limit orders only; the classic two-way LP is the
    "Advanced: two-way position" link in the header.
-2. **Set price range and deposit**: the lotus-main liquidity range chart (price line of the SDEX LBOND/USDC trades,
-   falling back to LBOND/receipt; timeframes 1H / 1D / 1W / 1M) flowing into a depth histogram of **every live pool
-   instance's bins plus the SDEX LBOND/USDC and LBOND/receipt books**, snapped to the same grid, in LBOND-equivalent.
-   Draggable **min / max** handles (snap to bins), the order being built in pink, current price dashed. Range presets
+2. **Set price range and deposit**: the [Pro range chart](#pro-range-chart) (the /trade chart on the SDEX LBOND/USDC
+   candles, LBOND/receipt for the DEX + yield strategy, either falling back to the other) with a depth histogram of
+   **every live pool instance's bins plus the SDEX LBOND/USDC and LBOND/receipt books**, snapped to the same grid, in
+   LBOND-equivalent. Draggable **min / max** handles (snap to bins), the order being built in pink, reference price dashed. Range presets
    (Ask: just above, sell the rip, ladder, wide; Bid: just below, buy the dip, ladder, wide), Min / Max price fields
-   with **- / +** steppers (one bin per click), weight (even / front / back), deposit with balance. Hover: crosshair +
-   price at the cursor; over the depth panel, the bin's price and size (pool / SDEX / yours).
+   with **- / +** steppers (one bin per click), weight (even / front / back), deposit with balance. Hover over the
+   depth panel: the bin's price and size (pool / SDEX / yours).
    **Reference price per strategy** (`lib/orderRoute.ts` `referenceFor`): each strategy reads the book it rests on,
    Lotus pool = the instance's bins then LBOND/USDC, Stellar DEX = LBOND/USDC, DEX + yield = LBOND/receipt (empty
    book: fallbacks). Before a strategy is chosen the range step uses the most conservative one (Ask: highest, Bid:

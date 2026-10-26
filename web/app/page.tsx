@@ -27,13 +27,6 @@ const why = ({ r, base, quote }: Codes) => [
   },
 ];
 
-const try_ = ({ r }: Codes) => [
-  { href: "/swap", title: "Swap", body: "Swap on the Lotus pool, or place a Limit or Pro range order." },
-  { href: "/pools", title: "Pools", body: "New position: Lotus pool or SDEX, with or without yield." },
-  { href: "/trade", title: "Trade", body: "SDEX orderbook: swaps, path payments, limit orders." },
-  { href: "/portfolio", title: "Portfolio", body: `Balances, open offers, positions, redeem ${r} 1:1.` },
-];
-
 export default function Landing() {
   const cfg = loadConfig();
   const receipt = cfg.receipt.code;
@@ -42,7 +35,6 @@ export default function Landing() {
   const idle = cfg.strategies.find((s) => s.status === "idle")?.receipt.code ?? "lUSDC";
   const earning = cfg.strategies.find((s) => s.status === "live")?.receipt.code ?? receipt;
   const WHY = why(codes);
-  const TRY = try_(codes);
   return (
     <main className="relative bg-black text-white">
       {/* ─────────────────────────────  HERO  ───────────────────────────── */}
@@ -122,30 +114,6 @@ export default function Landing() {
               <p className="mt-2 text-[14px] leading-relaxed text-white/45">{w.body}</p>
             </div>
           ))}
-        </div>
-      </section>
-
-      {/* ─────────────────────────────  TRY IT  ─────────────────────────── */}
-      <section className="border-t border-white/[0.06] px-4 py-16 sm:px-10">
-        <div className="mx-auto max-w-5xl">
-          <div className="text-center">
-            <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">Try it</span>
-          </div>
-          <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {TRY.map((t) => (
-              <Link
-                key={t.href}
-                href={t.href}
-                className="group flex items-center justify-between gap-4 rounded-2xl border border-white/10 px-5 py-4 transition-colors hover:border-white/30 hover:bg-white/[0.03]"
-              >
-                <span className="min-w-0">
-                  <span className="block text-base font-medium text-white">{t.title}</span>
-                  <span className="mt-0.5 block text-[13px] leading-snug text-white/45">{t.body}</span>
-                </span>
-                <span className="shrink-0 text-white/40 transition-transform group-hover:translate-x-0.5 group-hover:text-white">→</span>
-              </Link>
-            ))}
-          </div>
         </div>
       </section>
 

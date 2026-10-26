@@ -27,7 +27,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
       logo: "/tokens/lusdc.svg",
       kicker: idle,
       title: `${idle}, ${quote} as a receipt`,
-      body: `Deposit ${quote} in the Lotus vault and get ${idle} 1:1, a classic Stellar asset you can quote, trade and path-pay on the SDEX. Redeem it 1:1 for ${quote} whenever you want.`,
+      body: `Provide liquidity on Lotus or the SDEX and lock your position in Lotus' DeFindex vault. You hold ${idle}, 1:1 with ${quote}, and redeem it whenever you want.`,
       diagram: <ReceiptDiagram quote={quote} idle={idle} />,
       note: "Idle on testnet: no lending behind it.",
     },
@@ -35,7 +35,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
       logo: "/tokens/lusdcb.svg",
       kicker: earning,
       title: `${earning}, the receipt that earns`,
-      body: `Same 1:1 receipt, but the vault's ${quote} sits in a DeFindex strategy that lends on Blend. Quote your orders in ${earning}: they keep earning while they wait, and the yield is paid out to holders.`,
+      body: `Same flow, but the DeFindex strategy lends the ${quote} on Blend: your liquidity earns while it waits, and the yield is paid out to ${earning} holders.`,
       diagram: <EarningDiagram quote={quote} earning={earning} />,
       note: "Blend testnet interest, observed, not a forecast.",
     },
@@ -81,11 +81,11 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
   return (
     <section id="how" ref={ref} className="relative scroll-mt-0 border-t border-white/[0.06]" style={{ height: `${n * 100}vh` }}>
       <div className="sticky top-0 flex h-screen items-center overflow-hidden px-4 sm:px-10">
-        <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-6 sm:gap-10 lg:grid-cols-[1fr_1.1fr] lg:gap-16">
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-6 sm:gap-10 lg:grid-cols-[0.7fr_1.3fr] lg:gap-12">
           {/* coin */}
           <div className="flex justify-center" style={{ perspective: 1200 }}>
             <div
-              className="relative size-28 sm:size-56 lg:size-80"
+              className="relative size-28 sm:size-56 lg:size-72"
               style={{ transformStyle: "preserve-3d", transform: `rotateY(${angle}deg)` }}
             >
               {[front, back].map((src, i) => (
@@ -107,19 +107,19 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
           </div>
 
           {/* text: one block per step, cross-faded */}
-          <div className="relative min-h-[440px] sm:min-h-[460px]">
+          <div className="relative min-h-[460px] sm:min-h-[540px]">
             {steps.map((s, i) => (
               <div
                 key={s.kicker}
                 aria-hidden={i !== active}
-                className="absolute inset-0 transition-all duration-500"
+                className="absolute inset-0 text-center transition-all duration-500"
                 style={{ opacity: i === active ? 1 : 0, transform: `translateY(${(i - active) * 16}px)`, pointerEvents: i === active ? "auto" : "none" }}
               >
                 <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">
                   0{i + 1} · {s.kicker}
                 </span>
                 <h2 className="mt-4 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">{s.title}</h2>
-                <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-white/55 sm:text-base">{s.body}</p>
+                <p className="mx-auto mt-5 max-w-2xl text-[15px] leading-relaxed text-white/55 sm:text-base">{s.body}</p>
                 {s.diagram}
                 {s.note && <p className="mt-4 text-xs text-white/30">{s.note}</p>}
               </div>

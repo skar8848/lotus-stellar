@@ -13,7 +13,7 @@ import { Balances } from "./Balances";
 import { PoolPositions } from "./PoolPositions";
 import { ReceiptPositions } from "./ReceiptPositions";
 import { Summary } from "./Summary";
-import { loadPoolPositions, loadSupplies } from "./data";
+import { loadEarned, loadPoolPositions, loadSupplies } from "./data";
 import { XLM, buildBalanceRows, loadPrices, poolValue, walletTotals, type PriceMap } from "./model";
 
 const NO_PRICES: PriceMap = {};
@@ -34,6 +34,8 @@ export function PortfolioClient() {
   const pools = usePolling(poolsFn, 10000, !!address);
   const suppliesFn = useCallback(() => loadSupplies(config, net), [config, net]);
   const supplies = usePolling(suppliesFn, 15000, !!address);
+  const earnedFn = useCallback(() => (address ? loadEarned(config, address) : Promise.resolve({ earned: {}, complete: true })), [config, address]);
+  const earned = usePolling(earnedFn, 60000, !!address);
 
   const priceMap = prices.data ?? NO_PRICES;
   const rows = useMemo(() => buildBalanceRows(config, acct.data, priceMap), [config, acct.data, priceMap]);
@@ -70,6 +72,7 @@ export function PortfolioClient() {
     offers.refresh();
     pools.refresh();
     supplies.refresh();
+    earned.refresh();
   };
 
   const notFunded = !!address && acct.data === null && acct.updatedAt !== null;
@@ -117,7 +120,7 @@ export function PortfolioClient() {
 
           <PoolPositions data={pools.data} address={address} network={config.network} onChanged={refreshAll} />
 
-          <ReceiptPositions strategies={config.strategies} account={acct.data} supplies={supplies.data} network={config.network} loading={accountLoading} onChanged={refreshAll} />
+          <ReceiptPositions strategies={config.strategies} account={acct.data} supplies={supplies.data} earned={earned.data} network={config.network} loading={accountLoading} onChanged={refreshAll} />
 
           {/* same rule as /pools Your positions: a resting limit order is locked until fully filled (filled offers
               leave the book), so the shared OpenOffers table is shown `locked`: no Cancel, no Cancel range */}

@@ -19,10 +19,13 @@ export function ReceiptPositions({
   strategies,
   account,
   supplies,
+  earned,
   network,
   loading,
   onChanged,
 }: {
+  /** yield already paid by keeper distributions, per strategy id (see loadEarned) */
+  earned?: { earned: Record<string, bigint>; complete: boolean } | null;
   onChanged?: () => void;
   strategies: Strategy[];
   account: HorizonAccount | null;
@@ -75,12 +78,23 @@ export function ReceiptPositions({
                   label="Balance"
                   value={bal ? `${fmtAmt(balance)} ${s.receipt.code}` : loading ? "-" : "no trustline"}
                   muted={!bal}
-                  sub={pending !== null ? `+${fmt(fromStroops(pending), 7)} accrued, paid at the next distribution` : undefined}
+                  sub={pending !== null && !idle ? `+${fmt(fromStroops(pending), 7)} accrued, paid at the next distribution` : undefined}
                 />
                 <Cell
-                  label="Share of supply"
-                  value={share === null ? "-" : `${share < 0.01 && share > 0 ? "<0.01" : fmt(share, 2)}%`}
-                  sub={supply !== null ? `supply ${fmt(supply, 2)}` : hasContract(s) ? "supply unavailable" : "no contract"}
+                  label="Yield earned"
+                  value={
+                    idle
+                      ? "-"
+                      : earned
+                        ? `${earned.complete ? "" : "≥ "}+${fmt(fromStroops((earned.earned[s.id] ?? 0n) + (pending ?? 0n)), 7)} ${s.receipt.code}`
+                        : "..."
+                  }
+                  positive={!idle && !!earned && (earned.earned[s.id] ?? 0n) + (pending ?? 0n) > 0n}
+                  sub={
+                    idle
+                      ? "this vault does not lend"
+                      : `paid every ~15 min by the keeper${share !== null ? ` · ${share < 0.01 && share > 0 ? "<0.01" : fmt(share, 2)}% of supply` : ""}`
+                  }
                 />
                 <Cell
                   label="In open offers"
@@ -110,11 +124,11 @@ export function ReceiptPositions({
   );
 }
 
-function Cell({ label, value, sub, muted }: { label: string; value: string; sub?: string; muted?: boolean }) {
+function Cell({ label, value, sub, muted, positive }: { label: string; value: string; sub?: string; muted?: boolean; positive?: boolean }) {
   return (
     <div className="min-w-0">
       <div className="label">{label}</div>
-      <div className={`num mt-0.5 truncate text-sm font-medium ${muted ? "text-mutedfg" : ""}`}>{value}</div>
+      <div className={`num mt-0.5 truncate text-sm font-medium ${muted ? "text-mutedfg" : positive ? "text-green" : ""}`}>{value}</div>
       {sub ? <div className="mt-0.5 text-[11px] leading-snug text-mutedfg">{sub}</div> : null}
     </div>
   );

@@ -10,6 +10,7 @@ import {
   fetchAccountTrades,
   fetchOperationTxHash,
   simulateView,
+  toStroops,
   type NetCfg,
 } from "@/lib/stellar";
 import { fetchVaultEvents, hasContract } from "@/lib/vault";
@@ -123,4 +124,42 @@ export async function loadActivity(config: LotusConfig, net: NetCfg, address: st
 
   rows.sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
   return { rows: rows.slice(0, MAX_ROWS), unavailable };
+}
+
+type MintChange = { type?: string; to?: string; amount?: string; asset_code?: string; asset_issuer?: string };
+type PaymentRecord = { type: string; source_account?: string; asset_balance_changes?: MintChange[] };
+
+/**
+ * Yield paid to `address` per receipt (strategy id -> stroops): the receipt mints it received from keeper `distribute`
+ * calls. A deposit is invoked by the holder itself, so only mints from a transaction someone else sent count.
+ * Reads the account's last ~600 payment operations on Horizon; `complete` is false when there were more.
+ */
+export async function loadEarned(config: LotusConfig, address: string): Promise<{ earned: Record<string, bigint>; complete: boolean }> {
+  const earned: Record<string, bigint> = {};
+  const receipts = config.strategies.filter((s) => s.receipt.issuer);
+  let url: string | null = `${config.horizon}/accounts/${address}/payments?order=desc&limit=200`;
+  let pages = 0;
+  let complete = true;
+  while (url && pages < 3) {
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const j = (await res.json()) as { _embedded?: { records?: PaymentRecord[] }; _links?: { next?: { href?: string } } };
+    const records = j._embedded?.records ?? [];
+    for (const r of records) {
+      if (r.type !== "invoke_host_function" || r.source_account === address) continue;
+      for (const c of r.asset_balance_changes ?? []) {
+        if (c.type !== "mint" || c.to !== address || !c.amount) continue;
+        const s = receipts.find((x) => x.receipt.code === c.asset_code && x.receipt.issuer === c.asset_issuer);
+        if (s) earned[s.id] = (earned[s.id] ?? 0n) + toStroops(c.amount);
+      }
+    }
+    pages++;
+    if (records.length < 200) {
+      url = null;
+    } else {
+      url = j._links?.next?.href ?? null;
+      if (pages === 3) complete = false;
+    }
+  }
+  return { earned, complete };
 }

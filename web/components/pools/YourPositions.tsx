@@ -299,10 +299,12 @@ function PoolTableRow({
       </TableCell>
       <TableCell className="whitespace-nowrap pr-5 text-right">
         <div className="flex justify-end gap-1.5">
-          <Button size="xs" variant="outline" disabled={running || !claimable} onClick={() => onAct("claim", r)} data-testid={`claim-${inst.id}-${p.id}`}>
-            {busy === `claim:${r.key}` ? <Spinner /> : null}
-            Claim
-          </Button>
+          {claimable ? (
+            <Button size="xs" variant="outline" disabled={running} onClick={() => onAct("claim", r)} data-testid={`claim-${inst.id}-${p.id}`}>
+              {busy === `claim:${r.key}` ? <Spinner /> : null}
+              Claim
+            </Button>
+          ) : null}
           {poolPositionLocked(p) ? (
             <EarlyRedemption testId={`early-${inst.id}-${p.id}`} />
           ) : (

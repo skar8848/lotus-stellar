@@ -29,6 +29,7 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 | route | what |
 | --- | --- |
 | `/` | Landing: hero with the ASCII lotus (lazy loaded WebGL, black fallback), how it works, why Stellar, footer |
+| `/swap` | The previous front's Lite / Pro order screen (lotusfi.vercel.app/lite, /pro) as one page: Lite = swap against the Lotus pool or a one-price limit order, Pro (`?mode=pro`) = range order over the liquidity chart. See [/swap](#swap-lite--pro) |
 | `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), TradingView-style chart (or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit**, plus a "Range orders → Pools" link), bottom tabs (open orders with Cancel, trade history, balances) |
 | `/pools` | **New position** (Uniswap-style add-liquidity flow, see below): pair + side, range on the draggable chart over live depth, amount, then **Choose your strategy** (Lotus pool / + Blend yield / Stellar DEX / + Blend yield) and a review modal. Below it, **Your positions** across the four strategies (claim; locked until filled, then remove; View position / offer on stellar.expert). Header: **Swap on the pool** (lotus-main lite swap in a dialog, with the venue comparison) and **Advanced: two-way position** (`?pool=lbond-usdc-twoway`, the previous builder). `?tab=vault` redirects to `/portfolio#receipts` |
 | `/earn` | Redirect to `/pools` (old vault links with `?strategy=` go to `/portfolio#receipts`) |
@@ -41,6 +42,41 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 Vocabulary: the **Lotus pool** is the `lotus_pool` range pool (directional liquidity on a price grid). The
 **Lotus vault** is the `lotus_vault` wrapper (USDC to a DeFindex vault, receipt token `lUSDC`, a classic asset
 that trades on the SDEX). Never call the vault a pool.
+
+### /swap (Lite / Pro)
+
+The previous front's order screen (`owl/web` `app/lite` + `app/pro` → `components/app/LimitScreen.tsx`, Swap tab =
+`SwapPanel.tsx`, plus `VersionSwitcher`, `SlippageSettings`, the `YieldVenueModal` trigger) as ONE page: the Lite /
+Pro pill switches views in place (`/swap`, `/swap?mode=pro`; tab in `?tab=swap|limit`). Tabs Swap / Limit (Lite) or
+Swap / Range (Pro), and DCA: visible, disabled, "Coming soon" tooltip. Files: `app/swap/page.tsx`,
+`components/swap/SwapClient.tsx` (shell, shared pair), `SwapPanel.tsx`, `OrderViews.tsx` (Limit, Range, chart panel,
+strategy picker), `useRangeOrder.ts`, `parts.tsx`.
+
+- Tokens: the legs of the directional pool instances in the config (`directionalPools`: LBOND / USDC today), never
+  hard-coded; logos from `TokenIcon`. Each dropdown leaves out the other side's token, as on the original.
+- **Swap** (Lite and Pro): against the directional Lotus pool only, no SDEX routing. `quote_swap` on every live
+  directional instance (idle and vault-backed), best kept (full fills first, then the largest output), polled every
+  8 s. Details box: route (`via Lotus pool · <instance>`), pool price, price impact (vs a 0.01 reference quote on the
+  same instance), min received with the slippage of the settings popover, pool fee and bins crossed; a size above
+  the pool depth says how much would really be pulled, no depth says "No liquidity in the Lotus pool ... at this
+  size". Execute: re-quote, then `swap(min_out)` (footprint-race resend of `invokeContract`). A missing trustline of
+  the received asset is added in the same click (classic `changeTrust`, then the swap) unless it is `AUTH_REQUIRED`
+  (LBOND): then the button links to the Faucet (it adds and authorizes it); an unauthorized trustline shows the usual
+  "Not authorized by the issuer" message. Success: "Swapped X → Y · on-chain ✓ view tx ↗" (stellar.expert).
+- **Limit** (Lite): Sell / Buy cards, "When 1 LBOND is worth" (Market, ±0.5 / 1 / 2.5 / 5 % presets, spot), one price
+  = one bin; Expiry shows "Until filled" (Lotus orders have no expiry, so the original 1 day / 1 week / ... row is not
+  faked); then the strategy picker and **Confirm**.
+- **Range** (Pro): the chart panel (the /pools `LiquidityRangeChart`: SDEX trades, pool bins + SDEX offers, draggable
+  range, timeframes, "x% liquidity in range") next to Selling / Buying, Start price + Range end (% or price), end
+  presets, strategy picker, **Get started**.
+- Limit and Range are the /pools New position order: `useRangeOrder` reads the same live data (every live pool's
+  depth, SDEX books, reference price per strategy) and builds the plan with `planPosition`, the four destinations
+  come from `useOrderDestinations`, the picker (the original "Yield venue" trigger) opens `StrategyCards`, and the
+  button opens the /pools `ReviewDialog`, which signs through `lib/orderTx.ts` (nothing forked). Presets are scaled
+  to the pool grid (10 bps bins, at most 64 bins a position) instead of the original +5 / 10 / 25 / 50 %.
+- Visible differences from the original: the settings button also on the Lite Swap tab (the original Lite had no
+  slippage setting), the quote details box, "Connect a wallet" opens the wallet modal instead of being disabled,
+  no "Up to" block in Limit (one price), no Uniswap sourcing / LI.FI Composer rows (EVM only).
 
 ### /trade
 

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
+  { href: "/swap", label: "Swap" },
   { href: "/trade", label: "Trade" },
   { href: "/pools", label: "Pools" },
   { href: "/portfolio", label: "Portfolio" },
@@ -66,7 +67,7 @@ export function Nav() {
         </div>
       </nav>
       {/* phone: the destinations as a second row */}
-      <div className="grid w-full grid-cols-3 gap-1 px-4 pb-2 md:hidden">
+      <div className="grid w-full grid-cols-4 gap-1 px-4 pb-2 md:hidden">
         {LINKS.map((l) => (
           <Link
             key={l.href}

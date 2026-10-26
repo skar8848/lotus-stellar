@@ -92,11 +92,11 @@ export default function Landing() {
           {/* left: copy */}
           <div className="relative z-10 flex flex-col justify-center px-4 pb-12 pt-28 sm:px-10 lg:pb-0 lg:pl-16 lg:pr-10 lg:pt-0">
             <h1 className="font-[family-name:var(--font-audiowide)] text-5xl leading-[1.05] tracking-tight sm:text-6xl">Lotus</h1>
-            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">The most efficient liquidity on Stellar.</p>
+            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">Liquidity that earns while it waits.</p>
             <p className="mt-5 max-w-md text-[15px] leading-relaxed text-white/55 sm:text-base">
-              Market makers aren&apos;t incentivized enough to provide liquidity. Lotus changes that with a new type of pool, more
-              modular and built for market makers. Provide liquidity, put your idle liquidity to work in a strategy designed for it, and
-              trade on the SDEX seamlessly while your portfolio earns.
+              Resting liquidity sits idle, and market makers are rarely paid enough to provide it. Lotus is a new kind of pool
+              built for them: post directional range orders, let the idle side earn Blend yield, and keep trading on the Stellar DEX
+              while your portfolio works.
             </p>
             <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4 sm:mt-14">
               <Link

@@ -636,9 +636,12 @@ export function PriceChart({
           )}
         </Menu>
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          <TbBtn onClick={screenshot} title="Take a snapshot (PNG)" icon testId="chart-screenshot">
-            <Camera className="size-4" />
-          </TbBtn>
+          {/* hidden on phones, where the toolbar would overflow the screen */}
+          <span className="hidden sm:contents">
+            <TbBtn onClick={screenshot} title="Take a snapshot (PNG)" icon testId="chart-screenshot">
+              <Camera className="size-4" />
+            </TbBtn>
+          </span>
           <TbBtn onClick={toggleFull} title={full ? "Exit full screen" : "Full screen"} icon testId="chart-fullscreen">
             {full ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
           </TbBtn>

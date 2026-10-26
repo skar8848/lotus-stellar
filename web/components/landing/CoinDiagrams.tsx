@@ -118,7 +118,7 @@ export function ReceiptDiagram({ quote, idle }: { quote: string; idle: string })
       <Node x={225} y={42} w={150} title="Lotus vault" sub="unlent in DeFindex" accent />
       <Node x={450} y={42} w={150} logo="/tokens/lusdc.svg" title={idle} sub="instant buffer" accent />
       <Node x={210} y={152} w={180} title="Near-price orders" sub="about to fill" />
-      <Node x={420} y={152} w={180} title="Working capital" sub="always withdrawable" />
+      <Node x={420} y={152} w={180} title="Working capital" sub="redeem any time" />
     </Svg>
   );
 }
@@ -130,14 +130,14 @@ export function EarningDiagram({ quote, earning }: { quote: string; earning: str
     <Svg
       id={id}
       h={176}
-      label={`${quote} is locked in the Lotus vault, which mints ${earning} 1:1 and puts the ${quote} in a DeFindex strategy that lends on Blend. ${earning} provides liquidity on the Lotus pool or the Stellar DEX and keeps earning.`}
+      label={`${quote} is deposited in the Lotus vault, which mints ${earning} 1:1 and puts the ${quote} in a DeFindex strategy that lends on Blend. ${earning} provides liquidity on the Lotus pool or the Stellar DEX and keeps earning.`}
     >
       <Edge id={id} d="M152 32 H222" />
       <Label x={187} y={22} text="deposit" />
       <Edge id={id} d="M377 32 H447" />
       <Label x={412} y={22} text="mint 1:1" />
       <Edge id={id} d="M300 64 V112" />
-      <Label x={310} y={92} text="locks" anchor="start" />
+      <Label x={310} y={92} text="invests" anchor="start" />
       <Edge id={id} d="M223 144 H153" />
       <Label x={188} y={134} text="lends" />
       <Edge id={id} d="M525 64 V112" />

@@ -125,7 +125,8 @@ export function WalletProvider({ passphrase, children }: { passphrase: string; c
       if (cancelled) return;
       if (!kitInitialised) {
         StellarWalletsKit.init({
-          modules: defaultModules(),
+          // no MetaMask module: its adapter tries to reach the extension at init and logs "Failed to connect"
+          modules: defaultModules({ filterBy: (m) => m.productId !== "metamask" }),
           network: passphrase as (typeof types.Networks)[keyof typeof types.Networks],
           theme: {
             ...types.SwkAppDarkTheme,

@@ -14,7 +14,7 @@ Because the SDEX is where Stellar's liquidity and routers already are. A Blend p
 
 ## 3. Is the volume real?
 
-The transactions are real and on-chain. The source is not users: it is three accounts we run (two market makers and an arbitrageur) trading assets we issue (LBOND) or mint through the vault (the receipt). Their addresses are in `deployments/testnet.bot.json`. We describe it as market-maker volume everywhere, and the arbitrage profit in the demo scenarios is a transfer between our own accounts. There are no users on a hackathon testnet; the point is to exercise the mechanism under load. Measured: depeg restored in 10 to 12 s, cross-venue dislocation closed in 26 s, two 10-minute runs with 0 failed transactions.
+The transactions are real and on-chain. The source is not users: it is three accounts we run (two market makers and an arbitrageur) trading assets we issue (LBOND) or mint through the vault (the receipt). Their addresses are in `deployments/testnet.bot.json`. We describe it as market-maker volume everywhere, and the arbitrage profit in the demo scenarios is a transfer between our own accounts. There are no users on a hackathon testnet; the point is to exercise the mechanism under load. Measured: depeg restored in 10 to 12 s, cross-venue dislocation closed in 26 s, 0 failed transactions in the two measured 10-minute runs (over the whole day of bot activity, `mm_a` had 11 failed transactions out of about 1,300).
 
 ## 4. Where does the yield come from, and why did earlier testnet vaults show none?
 

@@ -266,7 +266,7 @@ export function SwapPanel({
 
       {/* quote details, in the lite result box style */}
       {valid && (best || noLiquidity || quote.error) ? (
-        <div className="rounded-xl border border-line bg-secondary px-3 py-2.5 text-[11px] text-mutedfg" data-testid="lite-details">
+        <div className="rounded-xl border border-line bg-secondary px-4 py-3 text-[13px] text-mutedfg" data-testid="lite-details">
           {best ? (
             <>
               <Row k="Route" v={<span data-testid="lite-route">via Lotus pool{pools.length > 1 ? ` · ${best.inst.label}` : ""}</span>} />

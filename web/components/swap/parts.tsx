@@ -134,7 +134,7 @@ export function NumberInput({ value, onChange, className, placeholder, testId, d
 
 export function Row({ k, v, testId }: { k: string; v: React.ReactNode; testId?: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-0.5" data-testid={testId}>
+    <div className="flex items-center justify-between gap-3 py-1" data-testid={testId}>
       <span>{k}</span>
       <span className="text-right tabular-nums text-white">{v}</span>
     </div>

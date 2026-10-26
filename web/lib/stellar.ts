@@ -829,7 +829,15 @@ export async function submitSorobanThenClassic(
     const account = await sourceAccount(net, p.source);
     const startSeq = account.sequenceNumber();
     p.onStage?.("simulating", l1);
-    const tx1 = await prepareInvoke(net, account, p.call); // s+1
+    let tx1: Awaited<ReturnType<typeof prepareInvoke>>;
+    try {
+      tx1 = await prepareInvoke(net, account, p.call); // s+1
+    } catch (e) {
+      // simulation failed: nothing was signed or sent. #10 is the token contract's balance error
+      const raw = e instanceof Error ? e.message : String(e);
+      const msg = /Error\(Contract, #10\)/.test(raw) ? "insufficient balance for the deposit" : raw;
+      throw new PairError(`${l1} failed in simulation, nothing moved and ${l2} was not sent: ${msg}`, "first", null);
+    }
     const tx2 = buildClassicTx(net, account, p.ops); // s+2
     p.onStage?.("signing", `${l1} (signature 1 of 2)`);
     const s1 = await p.sign(tx1.toXDR());

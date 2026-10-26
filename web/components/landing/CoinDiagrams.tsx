@@ -80,13 +80,13 @@ function Svg({ id, h, label, children }: { id: string; h: number; label: string;
 export function OrderDiagram({ base, quote }: { base: string; quote: string }) {
   const id = "coin-arrow-order";
   return (
-    <Svg id={id} h={196} label={`One range order, selling ${base} or buying it with ${quote}, waits on the Lotus pool or on the Stellar DEX.`}>
-      <Edge id={id} d="M300 62 V97 H130 V132" />
-      <Edge id={id} d="M300 97 H470 V132" />
-      <Label x={310} y={86} text="choose where it waits" anchor="start" />
+    <Svg id={id} h={208} label={`One range order, selling ${base} or buying it with ${quote}, waits on the Lotus pool or on the Stellar DEX.`}>
+      <Edge id={id} d="M300 62 V92 H130 V144" />
+      <Edge id={id} d="M300 92 H470 V144" />
+      <Label x={300} y={122} text="choose where it waits" />
       <Node x={150} y={2} w={300} title="One range order" sub={`sell ${base} over a range, or ${quote} to buy it`} accent />
-      <Node x={0} y={134} w={260} logo="/tokens/lotus-pool.svg" title="Lotus pool" sub="Soroban range pool" accent />
-      <Node x={340} y={134} w={260} logo="/tokens/xlm.svg" title="Stellar DEX" sub="native orderbook" />
+      <Node x={0} y={146} w={260} logo="/tokens/lotus-pool.svg" title="Lotus pool" sub="Soroban range pool" accent />
+      <Node x={340} y={146} w={260} logo="/tokens/xlm.svg" title="Stellar DEX" sub="native orderbook" />
     </Svg>
   );
 }

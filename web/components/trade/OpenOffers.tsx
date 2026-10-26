@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EARLY_REDEMPTION_LABEL } from "@/components/pools/positionsModel";
+import { useBlendApr } from "@/components/pools/useBlendApr";
 import { useAccount } from "@/lib/account";
 import { useConfig, useNet } from "@/lib/config-context";
 import { useTx, type Polled } from "@/lib/hooks";
@@ -86,9 +87,13 @@ export function OpenOffers({
   /** no cancel at all (portfolio rule: resting orders are locked until filled) */
   locked?: boolean;
 }) {
-  const { network } = useConfig();
+  const config = useConfig();
+  const { network } = config;
   const net = useNet();
   const wallet = useWallet();
+  // live Blend APR of the active vault: shown on orders quoted in its receipt instead of a plain "earns" tag
+  const apr = useBlendApr(config.strategies.find((s) => s.lotusVault === config.lotusVault) ?? null);
+  const aprPct = apr.live ? (apr.aprPct ?? apr.observedPct) : null;
   const acct = useAccount();
   const tx = useTx("Cancel");
   const [scope, setScope] = useState<"market" | "all">("market");
@@ -146,8 +151,12 @@ export function OpenOffers({
       {(() => {
         const tag = earnTag(m, side);
         return tag ? (
-          <span className="ml-1.5 text-[10px] text-primary" title={tag.title} data-testid="offer-earning">
-            {tag.label}
+          <span
+            className={cn("ml-1.5 text-[10px]", aprPct !== null ? "font-medium text-green" : "text-primary")}
+            title={aprPct !== null ? `${tag.title}. Blend APR observed on testnet, not a forecast.` : tag.title}
+            data-testid="offer-earning"
+          >
+            {aprPct !== null ? `${fmt(aprPct, 2, 2)}% APR` : tag.label}
           </span>
         ) : null;
       })()}

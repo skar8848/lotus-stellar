@@ -6,51 +6,62 @@ import { loadConfig } from "@/lib/config";
 // the deployment files decide which receipt is live (lUSDC on the idle v1 vault, lUSDCb on the Blend-backed v2)
 export const dynamic = "force-dynamic";
 
-const steps = (r: string) => [
+type Codes = { r: string; base: string; quote: string };
+
+const steps = ({ r, base, quote }: Codes) => [
   {
-    title: "Deposit USDC",
-    body: `Put USDC in the Lotus vault and get ${r} 1:1. The vault holds it in a DeFindex vault that lends on Blend when the strategy allocates to Blend.`,
+    title: "Create one order",
+    body: `Sell ${base} across a price range, or leave ${quote} waiting to buy it. Swap Pro sets a range, Limit sets one price; Pools builds the same order over the live chart.`,
   },
   {
-    title: "Quote it",
-    body: "Lay a range on the Lotus pool, or post offers on the SDEX orderbook. A whole ladder of offers goes in one transaction, with one signature.",
+    title: "Choose where it waits",
+    body: "Lotus pool: one directional position in the Soroban range pool. Stellar DEX: a ladder of SDEX offers, one per bin, at the same prices. Chosen once, at creation.",
   },
   {
-    title: "Keep earning while you wait",
-    body: `SDEX offers only set selling liabilities, so ${r} in open offers stays in your account and still receives the keeper's yield distributions. In the pool, the USDC leg can be parked in a DeFindex vault.`,
+    title: "Earn yield, or not",
+    body: `With yield on, the ${quote} leg goes through DeFindex into Blend: on the pool through the vault-backed instance, on the SDEX by quoting in ${r}, minted 1:1 by the Lotus vault and still earning inside open offers.`,
+  },
+  {
+    title: "Takers fill it",
+    body: `Takers swap on the Lotus pool, or trade and path-pay on the SDEX. A bot-run arbitrage keeps the two prices aligned, and ${r} redeems 1:1 for ${quote}.`,
   },
 ];
 
-const why = (r: string) => [
+const why = ({ r, base, quote }: Codes) => [
   {
     title: "Native orderbook",
-    body: "Limit orders and whole price ranges on the SDEX. No AMM curve in the middle: you choose the price of every level.",
+    body: `Each bin of a range becomes one SDEX offer at the same price. No AMM curve in the middle, and a taker can path-pay ${quote} into ${base} through the book in one transaction.`,
   },
   {
-    title: "Funds stay on your account",
-    body: `An offer sets a selling liability and moves nothing. The ${r} behind your offers keeps counting as yours until someone takes it.`,
+    title: "Offers move nothing",
+    body: `An SDEX offer only sets a selling liability: funds stay in your account. The ${r} behind your offers keeps earning until someone takes it.`,
   },
   {
-    title: "Path payments",
-    body: `A taker pays USDC and receives LBOND in a single transaction, routed USDC to ${r} to LBOND through the book.`,
+    title: "Soroban next to classic",
+    body: `lotus_pool and lotus_vault are Soroban contracts that compose with DeFindex and Blend, while ${base}, ${quote} and ${r} stay classic assets the SDEX can trade.`,
   },
   {
     title: "Regulated assets welcome",
-    body: "LBOND carries AUTH_REQUIRED, revocable and clawback flags, and still trades on the same orderbook as everything else.",
+    body: `${base} carries AUTH_REQUIRED, revocable and clawback flags, and still trades on the same orderbook and in the same pool as everything else.`,
   },
 ];
 
-const try_ = (r: string) => [
-  { href: "/trade", title: "Trade", body: "SDEX orderbook, swaps, limit and range orders." },
-  { href: "/pools", title: "Pools", body: `One range order: Lotus pool or SDEX, with or without Blend yield (${r}).` },
-  { href: "/portfolio", title: "Portfolio", body: "Balances, open offers and pool positions." },
+const try_ = ({ r }: Codes) => [
+  { href: "/swap", title: "Swap", body: "Swap on the Lotus pool, or place a Limit or Pro range order." },
+  { href: "/pools", title: "Pools", body: "New position: Lotus pool or SDEX, with or without yield." },
+  { href: "/trade", title: "Trade", body: "SDEX orderbook: swaps, path payments, limit orders." },
+  { href: "/portfolio", title: "Portfolio", body: `Balances, open offers, positions, redeem ${r} 1:1.` },
 ];
 
 export default function Landing() {
-  const receipt = loadConfig().receipt.code;
-  const STEPS = steps(receipt);
-  const WHY = why(receipt);
-  const TRY = try_(receipt);
+  const cfg = loadConfig();
+  const receipt = cfg.receipt.code;
+  const codes: Codes = { r: receipt, base: cfg.rwa.code, quote: cfg.underlying.code };
+  // real Blend interest only when the active receipt vault is a live strategy (v2); v1 stays idle
+  const liveYield = cfg.strategies.some((s) => s.status === "live" && s.lotusVault === cfg.lotusVault);
+  const STEPS = steps(codes);
+  const WHY = why(codes);
+  const TRY = try_(codes);
   return (
     <main className="relative bg-black text-white">
       {/* ─────────────────────────────  HERO  ───────────────────────────── */}
@@ -81,12 +92,11 @@ export default function Landing() {
           {/* left: copy */}
           <div className="relative z-10 flex flex-col justify-center px-4 pb-12 pt-28 sm:px-10 lg:pb-0 lg:pl-16 lg:pr-10 lg:pt-0">
             <h1 className="font-[family-name:var(--font-audiowide)] text-5xl leading-[1.05] tracking-tight sm:text-6xl">Lotus</h1>
-            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">Yield-bearing liquidity for Stellar&apos;s orderbook.</p>
+            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">Range limit orders that earn while they wait.</p>
             <p className="mt-5 max-w-md text-[15px] leading-relaxed text-white/55 sm:text-base">
-              Two venues for the same idea. The <span className="text-white/85">Lotus pool</span> is a Soroban range pool: place directional liquidity on
-              a price grid, inventory only goes down, proceeds only go up, no reverse path. The <span className="text-white/85">Lotus receipt</span>{" "}
-              {receipt} is USDC in the Lotus vault, backed by a DeFindex vault that lends on Blend. It trades on the SDEX, where your offers keep earning
-              while they wait, because an SDEX offer never moves funds out of your account.
+              Create one directional order: sell {codes.base} across a price range, or leave {codes.quote} waiting to buy it. Choose where it waits, the{" "}
+              <span className="text-white/85">Lotus pool</span> (a Soroban range pool) or the <span className="text-white/85">Stellar DEX</span> (a
+              ladder of offers, one per bin), and whether its {codes.quote} leg earns Blend yield through DeFindex in the meantime.
             </p>
             <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4 sm:mt-14">
               <Link
@@ -97,10 +107,10 @@ export default function Landing() {
                 <span className="transition-transform group-hover:translate-x-0.5">→</span>
               </Link>
               <Link
-                href="/pools"
+                href="/swap"
                 className="text-[15px] text-white/55 underline decoration-white/20 underline-offset-4 transition-colors hover:text-white hover:decoration-white/60"
               >
-                Open the pool
+                Place an order
               </Link>
             </div>
             <p className="mt-6 text-xs text-white/30">Stellar testnet demo.</p>
@@ -122,18 +132,19 @@ export default function Landing() {
       <section id="how" className="scroll-mt-24 border-t border-white/[0.06] px-4 py-20 sm:px-10 lg:py-28">
         <div className="mx-auto max-w-3xl text-center">
           <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">How it works</span>
-          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">One receipt. Two venues. Three moves.</h2>
+          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">One order. Four places to wait.</h2>
         </div>
 
         <div className="mx-auto mt-12 max-w-4xl">
-          <HowDiagram receipt={receipt} />
+          <HowDiagram receipt={receipt} base={codes.base} quote={codes.quote} />
           <p className="mx-auto mt-4 max-w-2xl text-center text-xs leading-relaxed text-white/35">
-            * Blend lending applies when the strategy allocates to it. The current testnet vault keeps its funds idle in the DeFindex vault, so no
-            lending interest is assumed anywhere in this app.
+            {liveYield
+              ? `* Yield is real Blend testnet interest, through our DeFindex vault. The rate follows Blend's testnet utilization: observed, not a forecast. Stellar testnet only.`
+              : "* Blend lending applies when the strategy allocates to it. The active testnet vault keeps its funds idle in DeFindex, so no lending interest is assumed. Stellar testnet only."}
           </p>
         </div>
 
-        <div className="mx-auto mt-16 grid max-w-4xl grid-cols-1 gap-y-12 text-center sm:grid-cols-3 sm:gap-x-12">
+        <div className="mx-auto mt-16 grid max-w-5xl grid-cols-1 gap-y-12 text-center sm:grid-cols-2 sm:gap-x-12 lg:grid-cols-4 lg:gap-x-10">
           {STEPS.map((s, i) => (
             <div key={s.title} className="flex flex-col items-center">
               <span className="font-[family-name:var(--font-audiowide)] text-sm text-white/30">0{i + 1}</span>
@@ -162,11 +173,11 @@ export default function Landing() {
 
       {/* ─────────────────────────────  TRY IT  ─────────────────────────── */}
       <section className="border-t border-white/[0.06] px-4 py-16 sm:px-10">
-        <div className="mx-auto max-w-4xl">
+        <div className="mx-auto max-w-5xl">
           <div className="text-center">
             <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">Try it</span>
           </div>
-          <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {TRY.map((t) => (
               <Link
                 key={t.href}
@@ -193,6 +204,9 @@ export default function Landing() {
             </Link>
             <Link href="#why" className="transition-colors hover:text-white">
               why Stellar
+            </Link>
+            <Link href="/swap" className="transition-colors hover:text-white">
+              swap
             </Link>
             <Link href="/trade" className="transition-colors hover:text-white">
               trade

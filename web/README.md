@@ -89,15 +89,22 @@ full-height right column); below 1024px everything stacks. Every action is signe
 Clicking a book level fills the Limit price. Swap and Limit have a Buy / Sell toggle and a % of available balance slider.
 Range orders are not on /trade: they are placed from /pools (the order panel links there).
 
-**Chart** (`components/trade/PriceChart.tsx`): laid out like the TradingView Advanced Chart widget, drawn with
-TradingView's open-source `lightweight-charts` on our own data (Horizon `/trade_aggregations` of the selected market).
-Tenor (the reference front) embeds TradingView's `embed-widget-advanced-chart.js` with `COINBASE:ETHUSD`-type symbols;
-that widget only plots TradingView's own feeds, so it cannot show testnet SDEX assets, and Tenor ships no
-`charting_library`. Top toolbar: Chart / Depth, intervals 1m 5m 15m 1h 1D 1W (the Horizon resolutions), candles / bars /
-line / area, Vol and EMA 9 toggles, zoom, reset, full screen. Legend (always on, the bar under the crosshair or the
-last bar): market, interval, O H L C, change, volume, trade count, EMA. Volume histogram at the bottom of the pane,
-dashed crosshair with UTC labels. Bottom bar: date ranges 1D 5D 1M 1Y (each also picks an interval) and All, UTC clock,
-`%` / `log` / `auto` price-scale modes. Horizon only returns buckets that had trades, so empty buckets are drawn as
+**Chart** (`components/trade/PriceChart.tsx`, helpers in `components/trade/chart/`): styled after Hyperliquid's chart
+(which is TradingView Advanced Charts), drawn with TradingView's open-source `lightweight-charts` on our own data
+(Horizon `/trade_aggregations` of the selected market); no licensed TradingView library, and the embed widget only
+plots TradingView's own feeds, so it cannot show testnet SDEX assets. Slate background, teal / red candles, dashed
+last-price line with its tag on the right axis, thin-space thousands. Top toolbar: Chart / Depth, 5m 1h D plus a
+dropdown with every Horizon resolution (1m 5m 15m 1h 1D 1W), chart type menu (candles / bars / line / area),
+`ƒx Indicators` (Volume, EMA 9, EMA 21, daily VWAP), snapshot (`takeScreenshot()` + legend, downloaded as PNG), full
+screen. Legend: market · interval · Lotus SDEX, live dot, O H L C and change colored by direction, volume, trade count,
+indicator values (bar under the crosshair, else the last bar). Left drawing rail (`chart/drawings.ts`, one series
+primitive): crosshair, trend line, horizontal line, horizontal ray, Fibonacci retracement (two clicks each, Esc
+cancels), measure (Δ price, %, bars and duration between two clicks), zoom in / out / reset, magnet (snaps to O/H/L/C),
+hide and remove all drawings. Drawings are stored per market in `localStorage` (`lotus.chart.drawings.v1:<market>`) as
+UTC time + price, so they stay put across intervals. The connected account's open offers are pink dotted price lines
+(the only Lotus-pink element). Bottom bar: ranges 5y 1y 6m 3m 1m 5d 1d (each picks the closest resolution and shows the
+data that exists), clock in local time (click: UTC), `%` / `log` / `auto` price-scale modes. The chart is created once;
+each poll pushes only the changed tail of every series (`syncSeries`). Horizon only returns buckets that had trades, so empty buckets are drawn as
 flat grey candles at the previous close with zero volume and a "no trades" tag in the legend (`fillCandleGaps` in
 `lib/book.ts`, up to 2000 buckets back from now): no trade is invented. The Depth view shows price, size, cumulative size and cumulative total at the nearest level.
 Hovering an order-book row highlights it and every level up to the spread, with a summary (levels, size, total, average).

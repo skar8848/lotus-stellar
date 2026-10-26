@@ -13,6 +13,8 @@ type Step = { logo: string; kicker: string; title: string; body: string; diagram
 const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 // share of each step spent flipping to the next one (the rest holds the face still)
 const FLIP = 0.35;
+// extra scroll (in vh) on the last step before the next section
+const HOLD = 70;
 
 export function CoinStory({ base, quote, idle, earning }: { base: string; quote: string; idle: string; earning: string }) {
   const steps: Step[] = [
@@ -52,9 +54,8 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
       const el = ref.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      const span = el.offsetHeight - window.innerHeight;
-      const t = span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 0;
-      setP(t * (n - 1));
+      // one viewport of scroll per step; the extra height (HOLD) keeps the last face pinned a little longer
+      setP(Math.min(n - 1, Math.max(0, -r.top / window.innerHeight)));
     };
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update);
@@ -79,7 +80,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
   const active = Math.round(k + turn);
 
   return (
-    <section id="how" ref={ref} className="relative scroll-mt-0 border-t border-white/[0.06]" style={{ height: `${n * 100}vh` }}>
+    <section id="how" ref={ref} className="relative scroll-mt-0 border-t border-white/[0.06]" style={{ height: `${n * 100 + HOLD}vh` }}>
       <div className="sticky top-0 flex h-screen items-center overflow-hidden px-4 sm:px-10">
         <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-6 sm:gap-10 lg:grid-cols-[0.7fr_1.3fr] lg:gap-12">
           {/* coin */}

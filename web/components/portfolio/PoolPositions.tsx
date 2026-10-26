@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Check, FlaskConical } from "lucide-react";
+import { Check } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Empty, ExplorerLink, Panel, Spinner, TxStatus } from "@/components/common";
-import { EARLY_REDEMPTION_LABEL, poolPositionLocked } from "@/components/pools/positionsModel";
+import { Empty, Panel, Spinner, TokenIcon, TxStatus } from "@/components/common";
+import { poolPositionLocked } from "@/components/pools/positionsModel";
 import { useAccount } from "@/lib/account";
 import { useNet } from "@/lib/config-context";
 import type { PoolInstance } from "@/lib/config-types";
@@ -97,187 +96,81 @@ function usePoolActions(address: string, network: string, onChanged: () => void)
   return { running: tx.running, busy, act, status: tx };
 }
 
-function PoolSection({ entry, network, actions }: { entry: PoolData; network: string; actions: Actions }) {
-  const { inst, positions, error, skipped } = entry;
+/** One position as a Uniswap-style row: pair, side, range, progress, what it pays out, one action. */
+function PositionRow({ inst, p, actions }: { inst: PoolInstance; p: Position; actions: Actions }) {
   const { running, act } = actions;
   const busy = actions.busy?.startsWith(`${inst.id}:`) ? actions.busy.slice(inst.id.length + 1) : null;
-
-  const feeTier = `${fmt(inst.feeBps / 100, 2)}%`;
-  const step = `${fmt(inst.binStepBps / 100, 2)}%`;
-
+  const u = positionUnits(p, inst);
+  const twoWay = p.mode === "TwoWay";
+  const dep = depositAsset(p, inst);
+  const filledPct = p.deposited > 0n ? Math.min(100, (Number(p.filled) / Number(p.deposited)) * 100) : 0;
+  // two-way: claim pays fees only (the reserves leave with Remove)
+  const claimable = twoWay ? p.pendingFees > 0n : p.pendingProceeds > 0n || p.pendingFees > 0n;
+  const id = String(p.id);
+  const sell = p.side === "Ask";
   return (
-    <Panel
-      title={inst.label}
-      subtitle={
-        <>
-          Fee tier {feeTier}, bin step {step}. USDC leg:{" "}
-          {inst.vault ? (
-            <>
-              parked in a DeFindex vault <ExplorerLink kind="contract" id={inst.vault} network={network} />
-            </>
-          ) : (
-            "idle in the pool"
-          )}
-          {inst.contract ? (
-            <>
-              {" · pool "}
-              <ExplorerLink kind="contract" id={inst.contract} network={network} />
-            </>
-          ) : null}
-        </>
-      }
-      right={
-        inst.mock ? (
-          <Badge variant="outline" className="gap-1.5 border-primary/40 text-primary">
-            <FlaskConical className="size-3" /> Local simulation
-          </Badge>
-        ) : (
-          <Badge variant="outline" className={cn("gap-1.5", inst.status === "live" ? "border-green/30 bg-green/10 text-green" : "border-border text-mutedfg")}>
-            {inst.status === "live" ? "Live" : inst.status === "idle" ? "Idle" : inst.status === "retired" ? "Retired" : "Coming soon"}
-          </Badge>
-        )
-      }
-      className="min-w-0"
-    >
-      {inst.status === "retired" ? (
-        <p className="mb-3 rounded-xl border border-border bg-secondary/50 px-3 py-2 text-xs text-mutedfg" data-testid="pool-retired-note">
-          Retired instance (replaced by a redeploy): it takes no new orders, but you can still claim and remove the positions you left here.
-        </p>
-      ) : null}
-      {inst.mock ? (
-        <p className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary" data-testid="pool-mock-note">
-          Local simulation (no pool contract deployed yet): nothing here is on-chain. Positions live in this browser only and claim and remove do not send transactions.
-        </p>
-      ) : null}
-      {skipped ? (
-        <Empty>This pool is announced but not deployed yet.</Empty>
-      ) : error ? (
-        <Empty>
-          <span className="text-destructive">Positions unavailable: {error}</span>
-        </Empty>
-      ) : positions.length === 0 ? (
-        <Empty>
-          No positions in this pool.{" "}
-          <Link href="/pools" className="text-primary underline-offset-2 hover:underline">
-            Open one on Pools
-          </Link>
-          .
-        </Empty>
-      ) : (
-        <div className="overflow-x-auto scroll-thin">
-          <table className="w-full min-w-[860px] text-xs" data-testid={`pool-table-${inst.id}`}>
-            <thead>
-              <tr className="label text-left">
-                <th className="py-1 pr-2 font-normal">Position</th>
-                <th className="py-1 pr-2 font-normal">Range ({inst.quote.code} per {inst.base.code})</th>
-                <th className="py-1 pr-2 text-right font-normal">Deposited</th>
-                <th className="py-1 pr-2 text-right font-normal">Remaining</th>
-                <th className="py-1 pr-2 text-right font-normal">Filled</th>
-                <th className="py-1 pr-2 text-right font-normal">Proceeds</th>
-                <th className="py-1 pr-2 text-right font-normal">Fees</th>
-                <th className="py-1 text-right font-normal" />
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((p) => {
-                const u = positionUnits(p, inst);
-                const twoWay = p.mode === "TwoWay";
-                const dep = depositAsset(p, inst);
-                const filledPct = p.deposited > 0n ? (Number(p.filled) / Number(p.deposited)) * 100 : 0;
-                // two-way: claim pays fees only (the reserves leave with Remove)
-                const claimable = twoWay ? p.pendingFees > 0n : p.pendingProceeds > 0n || p.pendingFees > 0n;
-                const id = String(p.id);
-                return (
-                  <tr key={id} className="border-t border-border align-top" data-testid="pool-position-row" data-position-id={id}>
-                    <td className="py-2 pr-2">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="num font-medium">#{id}</span>
-                        <Badge variant="outline" className={cn("px-1.5 py-0 text-[10px]", p.side === "Ask" ? "border-red/40 text-red" : "border-green/40 text-green")}>
-                          {p.side === "Ask" ? "Ask: sells " : "Bid: buys "}
-                          {inst.base.code}
-                        </Badge>
-                        {p.mode === "TwoWay" ? (
-                          <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                            two-way
-                          </Badge>
-                        ) : null}
-                        {p.vaulted ? (
-                          <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-mutedfg">
-                            USDC in DeFindex
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-mutedfg">
-                        bins {p.loBin} to {p.hiBin}
-                      </div>
-                    </td>
-                    <td className="num py-2 pr-2">
-                      {priceText(p.loBin, inst.binStepBps)} to {priceText(p.hiBin, inst.binStepBps)}
-                    </td>
-                    <td className="num py-2 pr-2 text-right">
-                      {fmtAmt(p.deposited)} <span className="text-mutedfg">{dep.code}</span>
-                    </td>
-                    <td className="num py-2 pr-2 text-right" data-testid={twoWay ? "twoway-holdings" : undefined}>
-                      {fmtAmt(p.inventory)} <span className="text-mutedfg">{u.inventory.code}</span>
-                      {twoWay ? (
-                        <div>
-                          {fmtAmt(p.pendingProceeds)} <span className="text-mutedfg">{u.proceeds.code}</span>
-                          <div className="text-[11px] text-mutedfg">both held now</div>
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="num py-2 pr-2 text-right">
-                      {fmtAmt(p.filled)} <span className="text-mutedfg">{u.inventory.code}</span>
-                      <div className="text-[11px] text-mutedfg">{twoWay ? "traded through, both ways" : `${fmt(filledPct, 1)}% of deposit`}</div>
-                    </td>
-                    <td className={cn("num py-2 pr-2 text-right", !twoWay && p.pendingProceeds > 0n && "text-green")}>
-                      {twoWay ? (
-                        <span className="text-mutedfg">in reserve (paid on Remove)</span>
-                      ) : (
-                        <>
-                          {fmtAmt(p.pendingProceeds)} <span className="text-mutedfg">{u.proceeds.code}</span>
-                        </>
-                      )}
-                    </td>
-                    <td className={cn("num py-2 pr-2 text-right", p.pendingFees > 0n && "text-green")}>
-                      {fmtAmt(p.pendingFees)} <span className="text-mutedfg">{u.fees.code}</span>
-                    </td>
-                    <td className="py-2 text-right">
-                      <div className="flex justify-end gap-1.5">
-                        <Button size="xs" variant="outline" disabled={running || !claimable} onClick={() => act("claim", p, inst)} data-testid={`pool-claim-${id}`}>
-                          {busy === `claim-${id}` ? <Spinner /> : null}
-                          Claim
-                        </Button>
-                        {poolPositionLocked(p) ? (
-                          <Button size="xs" variant="outline" disabled title="Locked until the order is fully filled. Early redemption is coming soon." data-testid={`pool-early-${id}`}>
-                            {EARLY_REDEMPTION_LABEL}
-                          </Button>
-                        ) : (
-                          <Button size="xs" variant="outline" disabled={running} onClick={() => act("remove", p, inst)} data-testid={`pool-remove-${id}`}>
-                            {busy === `remove-${id}` ? <Spinner /> : null}
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+    <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between" data-testid="pool-position-row" data-position-id={id}>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex -space-x-1.5">
+            <TokenIcon code={inst.base.code} size={22} className="ring-2 ring-card" />
+            <TokenIcon code={inst.quote.code} size={22} className="ring-2 ring-card" />
+          </span>
+          <span className="text-sm font-medium">
+            {inst.base.code} / {inst.quote.code}
+          </span>
+          <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium", sell ? "bg-red/10 text-red" : "bg-green/10 text-green")}>
+            {twoWay ? "Two-way" : sell ? `Sell ${inst.base.code}` : `Buy ${inst.base.code}`}
+          </span>
+          {p.vaulted ? <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">Earning yield</span> : null}
+          {inst.status === "retired" ? <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[11px] text-mutedfg">Retired pool</span> : null}
+          {inst.mock ? <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[11px] text-mutedfg">Simulated</span> : null}
         </div>
-      )}
-      {positions.length > 0 ? (
-        <p className="mt-3 text-[11px] text-mutedfg">
-          Directional positions only move one way: remaining inventory goes down, proceeds and fees go up and are never re-offered. Claim pays out proceeds and fees and keeps the position open. A directional position is locked until fully filled (early redemption is coming); Remove then closes it.
-          Two-way positions trade in both directions: they hold both {inst.base.code} and {inst.quote.code} right now, so you can end up with more of either asset; Claim pays fees only and Remove pays both reserves plus fees.
-        </p>
-      ) : null}
-    </Panel>
+        <div className="num mt-2 text-xs text-mutedfg">
+          {priceText(p.loBin, inst.binStepBps)} ↔ {priceText(p.hiBin, inst.binStepBps)} {inst.quote.code} · {fmtAmt(p.deposited)} {dep.code}
+        </div>
+        {twoWay ? null : (
+          <div className="mt-2.5 flex max-w-sm items-center gap-2.5">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-secondary">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${filledPct}%` }} />
+            </div>
+            <span className="num text-[11px] text-mutedfg">{fmt(filledPct, 0)}% filled</span>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-4 sm:justify-end">
+        {!twoWay && p.pendingProceeds > 0n ? (
+          <div className="text-right">
+            <div className="num text-sm text-green">
+              {fmtAmt(p.pendingProceeds)} {u.proceeds.code}
+            </div>
+            <div className="text-[11px] text-mutedfg">to claim</div>
+          </div>
+        ) : null}
+        <div className="flex gap-1.5">
+          {claimable ? (
+            <Button size="xs" disabled={running} onClick={() => act("claim", p, inst)} data-testid={`pool-claim-${id}`}>
+              {busy === `claim-${id}` ? <Spinner /> : null}
+              Claim
+            </Button>
+          ) : null}
+          {poolPositionLocked(p) ? (
+            <span className="rounded-md border border-border px-2 py-1 text-[11px] text-mutedfg" title="Locked until the order is fully filled. Early redemption is coming soon." data-testid={`pool-early-${id}`}>
+              Locked until filled
+            </span>
+          ) : (
+            <Button size="xs" variant="outline" disabled={running} onClick={() => act("remove", p, inst)} data-testid={`pool-remove-${id}`}>
+              {busy === `remove-${id}` ? <Spinner /> : null}
+              Remove
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
-/** Lotus pool positions of the account, one block per pool instance. */
+/** Lotus pool positions of the account, all pools in one list. */
 export function PoolPositions({
   data,
   address,
@@ -290,17 +183,15 @@ export function PoolPositions({
   onChanged: () => void;
 }) {
   const actions = usePoolActions(address, network, onChanged);
-  // only the pools where this account has positions (or whose read failed); one empty note when there are none
-  const shown = (data ?? []).filter((d) => d.positions.length > 0 || !!d.error);
+  const rows = (data ?? []).flatMap((d) => d.positions.map((p) => ({ inst: d.inst, p })));
+  const errors = (data ?? []).filter((d) => d.error);
   return (
-    <section className="min-w-0 space-y-4" data-testid="portfolio-pool-positions">
+    <section className="min-w-0" data-testid="portfolio-pool-positions">
       <ActionStatus state={actions.status.state} network={network} onDismiss={actions.status.reset} />
-      {data === null ? (
-        <Panel title="Lotus pool positions">
+      <Panel title="Pool positions" right={rows.length > 0 ? <span className="text-xs text-mutedfg">{rows.length}</span> : undefined} className="min-w-0">
+        {data === null ? (
           <Empty>Loading...</Empty>
-        </Panel>
-      ) : shown.length === 0 ? (
-        <Panel title="Lotus pool positions">
+        ) : rows.length === 0 ? (
           <Empty>
             No pool positions.{" "}
             <Link href="/pools" className="text-primary underline-offset-2 hover:underline">
@@ -308,10 +199,19 @@ export function PoolPositions({
             </Link>
             .
           </Empty>
-        </Panel>
-      ) : (
-        shown.map((d) => <PoolSection key={d.inst.id} entry={d} network={network} actions={actions} />)
-      )}
+        ) : (
+          <div className="-mx-4 divide-y divide-border">
+            {rows.map(({ inst, p }) => (
+              <PositionRow key={`${inst.id}:${p.id}`} inst={inst} p={p} actions={actions} />
+            ))}
+          </div>
+        )}
+        {errors.map((d) => (
+          <p key={d.inst.id} className="mt-2 text-xs text-destructive">
+            {d.inst.label}: positions unavailable ({d.error})
+          </p>
+        ))}
+      </Panel>
     </section>
   );
 }

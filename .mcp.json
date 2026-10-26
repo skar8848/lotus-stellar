@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "lotus": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["mcp/dist/index.js"],
+      "env": {
+        "LOTUS_APP_URL": "https://lotus-stellar.vercel.app"
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@lotus-stellar/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Lotus on Stellar (testnet): config, markets, order books, lotus_pool and lotus_vault reads, unsigned transaction builders and submission.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "sync": "node scripts/sync-shared.mjs",
+    "build": "node scripts/sync-shared.mjs && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^17.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "~5.9.3"
+  }
+}

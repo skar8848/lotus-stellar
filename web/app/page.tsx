@@ -80,7 +80,7 @@ export default function Landing() {
               why Stellar
             </Link>
             <Link
-              href="/trade"
+              href="/swap"
               className="rounded-full border border-white/20 px-4 py-1.5 text-white/85 transition-colors hover:border-white/50 hover:text-white"
             >
               Launch app
@@ -92,25 +92,19 @@ export default function Landing() {
           {/* left: copy */}
           <div className="relative z-10 flex flex-col justify-center px-4 pb-12 pt-28 sm:px-10 lg:pb-0 lg:pl-16 lg:pr-10 lg:pt-0">
             <h1 className="font-[family-name:var(--font-audiowide)] text-5xl leading-[1.05] tracking-tight sm:text-6xl">Lotus</h1>
-            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">Range limit orders that earn while they wait.</p>
+            <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">The most efficient liquidity on Stellar.</p>
             <p className="mt-5 max-w-md text-[15px] leading-relaxed text-white/55 sm:text-base">
-              Create one directional order: sell {codes.base} across a price range, or leave {codes.quote} waiting to buy it. Choose where it waits, the{" "}
-              <span className="text-white/85">Lotus pool</span> (a Soroban range pool) or the <span className="text-white/85">Stellar DEX</span> (a
-              ladder of offers, one per bin), and whether its {codes.quote} leg earns Blend yield through DeFindex in the meantime.
+              Market makers aren&apos;t incentivized enough to provide liquidity. Lotus changes that with a new type of pool, more
+              modular and built for market makers. Provide liquidity, put your idle liquidity to work in a strategy designed for it, and
+              trade on the SDEX seamlessly while your portfolio earns.
             </p>
             <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4 sm:mt-14">
               <Link
-                href="/trade"
+                href="/swap"
                 className="group inline-flex items-center gap-2.5 rounded-full bg-white px-8 py-4 text-lg font-medium text-black transition-transform hover:scale-[1.02]"
               >
                 Launch the app
                 <span className="transition-transform group-hover:translate-x-0.5">→</span>
-              </Link>
-              <Link
-                href="/swap"
-                className="text-[15px] text-white/55 underline decoration-white/20 underline-offset-4 transition-colors hover:text-white hover:decoration-white/60"
-              >
-                Place an order
               </Link>
             </div>
             <p className="mt-6 text-xs text-white/30">Stellar testnet demo.</p>

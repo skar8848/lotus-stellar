@@ -49,6 +49,9 @@ export function ReceiptPositions({
             const offers = inOffers(bal);
             const supply = supplies?.[s.id] ?? null;
             const share = balance !== null && supply !== null && supply > 0n ? (Number(balance) / Number(supply)) * 100 : null;
+            // this holder's part of the interest accrued since the last distribution (keeper runs every ~15 min)
+            const surplus = supplies?.[`surplus:${s.id}`] ?? null;
+            const pending = balance !== null && supply !== null && surplus !== null && supply > 0n && surplus > 0n ? (surplus * balance) / supply : null;
             const idle = s.status !== "live";
             return (
               <li key={s.id} className="grid gap-x-6 gap-y-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))_auto] md:items-center" data-testid={`receipt-${s.id}`}>
@@ -68,7 +71,12 @@ export function ReceiptPositions({
                     ) : null}
                   </div>
                 </div>
-                <Cell label="Balance" value={bal ? `${fmtAmt(balance)} ${s.receipt.code}` : loading ? "-" : "no trustline"} muted={!bal} />
+                <Cell
+                  label="Balance"
+                  value={bal ? `${fmtAmt(balance)} ${s.receipt.code}` : loading ? "-" : "no trustline"}
+                  muted={!bal}
+                  sub={pending !== null ? `+${fmt(fromStroops(pending), 7)} accrued, paid at the next distribution` : undefined}
+                />
                 <Cell
                   label="Share of supply"
                   value={share === null ? "-" : `${share < 0.01 && share > 0 ? "<0.01" : fmt(share, 2)}%`}

@@ -52,6 +52,9 @@ export async function loadSupplies(config: LotusConfig, net: NetCfg): Promise<Re
       try {
         const v = await simulateView<bigint>(net, s.lotusVault, "supply");
         out[s.id] = typeof v === "bigint" ? v : null;
+        // accrued interest not yet distributed (simulation only: the view writes a DeFindex fee report)
+        const sur = await simulateView<bigint>(net, s.lotusVault, "surplus").catch(() => null);
+        out[`surplus:${s.id}`] = typeof sur === "bigint" ? sur : null;
       } catch {
         out[s.id] = null;
       }

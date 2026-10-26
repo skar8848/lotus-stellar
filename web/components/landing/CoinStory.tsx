@@ -2,29 +2,17 @@
 
 // "How it works" as a scroll story: a round coin stays pinned while the section scrolls, and flips from the
 // Lotus logo to the idle receipt, then to the yield-bearing receipt. Each face comes with a short text and a
-// one-line flow. The coin has two faces (backface-visibility hidden); the face that is about to turn into
+// small diagram (CoinDiagrams). The coin has two faces (backface-visibility hidden); the face that is about to turn into
 // view is swapped to the next logo while it is hidden.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { EarningDiagram, OrderDiagram, ReceiptDiagram } from "./CoinDiagrams";
 
-type Step = { logo: string; kicker: string; title: string; body: string; flow: string[]; note?: string };
+type Step = { logo: string; kicker: string; title: string; body: string; diagram: ReactNode; note?: string };
 
 const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 // share of each step spent flipping to the next one (the rest holds the face still)
 const FLIP = 0.35;
-
-function Flow({ items }: { items: string[] }) {
-  return (
-    <div className="mt-7 flex flex-wrap items-center gap-2 text-[13px]">
-      {items.map((it, i) => (
-        <span key={it} className="flex items-center gap-2">
-          {i > 0 && <span className="text-[#F3B1CE]">→</span>}
-          <span className="rounded-full border border-white/12 bg-white/[0.03] px-3 py-1.5 text-white/80">{it}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
 
 export function CoinStory({ base, quote, idle, earning }: { base: string; quote: string; idle: string; earning: string }) {
   const steps: Step[] = [
@@ -33,14 +21,14 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
       kicker: "Lotus",
       title: "Trade seamlessly on Lotus",
       body: `One-way range orders: sell ${base} across a price range, or leave ${quote} waiting to buy it. The order fills bin by bin as the price walks through it, on the Lotus pool or on the Stellar DEX, chosen once at creation.`,
-      flow: ["Range order", "Lotus pool or SDEX", "Filled"],
+      diagram: <OrderDiagram base={base} quote={quote} />,
     },
     {
       logo: "/tokens/lusdc.svg",
       kicker: idle,
       title: `${idle}, ${quote} as a receipt`,
       body: `Deposit ${quote} in the Lotus vault and get ${idle} 1:1, a classic Stellar asset you can quote, trade and path-pay on the SDEX. Redeem it 1:1 for ${quote} whenever you want.`,
-      flow: [quote, "Lotus vault", idle, "SDEX offers"],
+      diagram: <ReceiptDiagram quote={quote} idle={idle} />,
       note: "Idle on testnet: no lending behind it.",
     },
     {
@@ -48,7 +36,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
       kicker: earning,
       title: `${earning}, the receipt that earns`,
       body: `Same 1:1 receipt, but the vault's ${quote} sits in a DeFindex strategy that lends on Blend. Quote your orders in ${earning}: they keep earning while they wait, and the yield is paid out to holders.`,
-      flow: [quote, "Lotus vault", "DeFindex", "Blend"],
+      diagram: <EarningDiagram quote={quote} earning={earning} />,
       note: "Blend testnet interest, observed, not a forecast.",
     },
   ];
@@ -93,11 +81,11 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
   return (
     <section id="how" ref={ref} className="relative scroll-mt-0 border-t border-white/[0.06]" style={{ height: `${n * 100}vh` }}>
       <div className="sticky top-0 flex h-screen items-center overflow-hidden px-4 sm:px-10">
-        <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-10 lg:grid-cols-[1fr_1.1fr] lg:gap-16">
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-6 sm:gap-10 lg:grid-cols-[1fr_1.1fr] lg:gap-16">
           {/* coin */}
           <div className="flex justify-center" style={{ perspective: 1200 }}>
             <div
-              className="relative size-40 sm:size-64 lg:size-80"
+              className="relative size-28 sm:size-56 lg:size-80"
               style={{ transformStyle: "preserve-3d", transform: `rotateY(${angle}deg)` }}
             >
               {[front, back].map((src, i) => (
@@ -119,7 +107,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
           </div>
 
           {/* text: one block per step, cross-faded */}
-          <div className="relative min-h-[300px] sm:min-h-[280px]">
+          <div className="relative min-h-[440px] sm:min-h-[460px]">
             {steps.map((s, i) => (
               <div
                 key={s.kicker}
@@ -132,7 +120,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
                 </span>
                 <h2 className="mt-4 font-[family-name:var(--font-audiowide)] text-balance text-3xl leading-[1.15] sm:text-4xl">{s.title}</h2>
                 <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-white/55 sm:text-base">{s.body}</p>
-                <Flow items={s.flow} />
+                {s.diagram}
                 {s.note && <p className="mt-4 text-xs text-white/30">{s.note}</p>}
               </div>
             ))}
@@ -140,7 +128,7 @@ export function CoinStory({ base, quote, idle, earning }: { base: string; quote:
         </div>
 
         {/* progress dots */}
-        <div className="absolute right-4 top-1/2 flex -translate-y-1/2 flex-col gap-2 sm:right-8">
+        <div className="absolute right-8 top-1/2 hidden -translate-y-1/2 flex-col gap-2 sm:flex">
           {steps.map((s, i) => (
             <span key={s.kicker} className={`size-1.5 rounded-full transition-colors ${i === active ? "bg-[#F3B1CE]" : "bg-white/20"}`} />
           ))}

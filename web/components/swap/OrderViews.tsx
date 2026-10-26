@@ -162,7 +162,14 @@ function StrategyPicker({ o, apr }: { o: RangeOrder; apr: LiveApr }) {
         className="flex w-full items-center justify-between rounded-xl bg-secondary px-4 py-3 text-left transition hover:bg-white/[0.04]"
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          {d ? <TokenIcon code={d.venue === "pool" ? o.base.code : "XLM"} size={22} /> : null}
+          {d ? (
+            d.venue === "pool" ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src="/tokens/lotus-pool.svg" alt="" width={22} height={22} className="size-[22px] shrink-0 rounded-full" />
+            ) : (
+              <TokenIcon code="XLM" size={22} />
+            )
+          ) : null}
           <span className="min-w-0">
             <span className="block text-[11px] text-mutedfg">Strategy</span>
             <span className="block truncate text-sm font-medium text-white">{d ? TITLE[d.id] : "Choose where your order waits"}</span>

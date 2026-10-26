@@ -98,7 +98,11 @@ export function StrategyCards({
               </div>
               <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium", d.venue === "pool" ? "bg-primary/10 text-primary" : "bg-white/5 text-mutedfg")}>
                 {d.venue === "pool" ? (
-                  "Soroban"
+                  <span className="inline-flex items-center gap-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/tokens/lotus-pool.svg" alt="" width={12} height={12} className="size-3 rounded-full" />
+                    Lotus pool
+                  </span>
                 ) : (
                   <span className="inline-flex items-center gap-1">
                     <TokenIcon code="XLM" size={12} />
@@ -109,7 +113,7 @@ export function StrategyCards({
             </div>
             <p className="text-xs leading-relaxed text-mutedfg">{explain(d.id, side, base.code, quote.code, receipt.code, bins)}</p>
 
-            <div className="mt-auto grid grid-cols-2 gap-2 border-t border-line pt-3 text-xs">
+            <div className="mt-auto border-t border-line pt-3 text-xs">
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-mutedfg">Expected yield</div>
                 {!d.yieldOn ? (
@@ -130,17 +134,6 @@ export function StrategyCards({
                     </span>
                   </div>
                 )}
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-wide text-mutedfg">Signatures</div>
-                <div className="mt-0.5 font-medium tabular-nums" data-testid={`strategy-${d.id}-sigs`}>
-                  {d.signatures}
-                  {d.signatures > 1 ? (
-                    <span className="block text-[10px] font-normal leading-snug text-mutedfg">
-                      {d.needsReceiptTrustline ? `${receipt.code} trustline, deposit, offers` : "deposit, then offers"}
-                    </span>
-                  ) : null}
-                </div>
               </div>
             </div>
 

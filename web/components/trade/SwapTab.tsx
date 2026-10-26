@@ -289,9 +289,6 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
       <ActionButton side={side} onClick={swap} disabled={tx.running || blockedBy !== null} blocked={blockedBy !== null && !tx.running} testId="swap-submit">
         {tx.running ? <Spinner className="size-4" /> : blockedBy ?? (side ? `${side === "buy" ? "Buy" : "Sell"} ${market.base.code}` : "Swap")}
       </ActionButton>
-      <p className="text-[10px] leading-relaxed text-mutedfg">
-        One transaction, one wallet signature: Horizon finds the best path through the books ({market.underlying.code} to {config.rwa.code} goes {market.underlying.code} &gt; {market.receipt.code} &gt; {config.rwa.code}). Strict send: you pay exactly what you enter; it fails on-chain if the fill would be under the minimum.
-      </p>
       <TxStatus state={tx.state} network={config.network} onDismiss={tx.reset} />
     </div>
   );

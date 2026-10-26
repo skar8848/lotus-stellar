@@ -4,7 +4,7 @@
 // action. LBOND is AUTH_REQUIRED: a trustline alone is not enough, the issuer must authorize the account.
 
 import { useCallback } from "react";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAccount } from "@/lib/account";
 import { useConfig, useNet } from "@/lib/config-context";
@@ -60,7 +60,6 @@ export function TrustlineNotice({
   asset,
   access,
   verb = "hold",
-  showOk = false,
 }: {
   asset: AssetRef;
   access: AssetAccess;
@@ -82,16 +81,12 @@ export function TrustlineNotice({
     });
 
   if (access.state === "disconnected" || access.state === "loading") return null;
+
   const regulated = access.flags?.authRequired;
 
   if (access.state === "ok") {
-    if (!showOk || !regulated) return null;
-    return (
-      <div className="mt-2 flex items-center gap-1.5 text-[11px] text-mutedfg" data-testid={`access-${asset.code}`} data-access="ok">
-        <ShieldCheck className="size-3.5 text-green" />
-        {asset.code} is regulated (AUTH_REQUIRED): this account is authorized by the issuer.
-      </div>
-    );
+    // authorized: nothing to say (only problems are shown)
+    return null;
   }
 
   if (access.state === "no-trustline") {

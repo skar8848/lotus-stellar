@@ -42,7 +42,6 @@ export function BottomPanel({
   resizable: boolean;
   maxHeight: number;
 }) {
-  const { network } = useConfig();
   const wallet = useWallet();
   const [tab, setTab] = useState<BottomTab>("orders");
   const [height, setHeight] = useState(DEFAULT_H);
@@ -112,11 +111,6 @@ export function BottomPanel({
             </button>
           ))}
         </div>
-        {wallet.address ? (
-          <span className="hidden shrink-0 items-center gap-1.5 text-[11px] text-mutedfg sm:flex">
-            Account <ExplorerLink kind="account" id={wallet.address} network={network} className="text-[11px]" />
-          </span>
-        ) : null}
       </div>
       <div className={cn("min-h-0 flex-1 scroll-thin", resizable ? "overflow-auto" : "")}>
         {tab === "orders" ? <OpenOffers markets={markets} market={market} offers={offers} onChanged={onChanged} bare /> : null}

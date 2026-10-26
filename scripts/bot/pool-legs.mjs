@@ -7,7 +7,8 @@
 //              (remove_position + add_position) when fair value moved a few bins or a side is mostly filled.
 //   CrossArb   arb compares the pool (quote_swap, fee included) with the SDEX route LBOND <-> lUSDC <-> USDC and,
 //              when the net edge clears --cross-min-edge-bps, executes the pool swap and the opposite path
-//              payment. Directions: buy on the pool / sell on the SDEX, or buy on the SDEX / sell on the pool.
+//              payment. With --usdc-book on the direct LBOND/USDC book is a second SDEX venue: each candidate
+//              uses whichever of the two SDEX legs prices better. Directions: buy on the pool / sell on the SDEX, or buy on the SDEX / sell on the pool.
 //   Flow.tickPool (in mm.mjs) mm_b takes small clips from the pool so it prints volume there too.
 
 import { Operation } from '@stellar/stellar-sdk';
@@ -167,8 +168,13 @@ export class CrossArb {
   async books() {
     const { bot } = this;
     const { chain, assets, settings: s, acct } = bot;
-    const [bond, peg] = await Promise.all([chain.orderBook(assets.lbond, assets.lusdc), chain.orderBook(assets.lusdc, assets.usdc)]);
-    if (s.ladder === 'take') return { bond, peg };
+    const usdcOn = s.usdcBook === 'on';
+    const [bond, peg, direct] = await Promise.all([
+      chain.orderBook(assets.lbond, assets.lusdc),
+      chain.orderBook(assets.lusdc, assets.usdc),
+      usdcOn ? chain.orderBook(assets.lbond, assets.usdc) : { bids: [], asks: [] },
+    ]);
+    if (s.ladder === 'take') return { bond, peg, direct };
     if (!bot.mmState.offers || Date.now() - bot.mmState.at > 30_000) {
       const { MarketMaker } = await import('./mm.mjs');
       bot.mmState = { offers: new MarketMaker(bot).classify(await chain.accountOffers(acct.mm_a.pub)), at: Date.now() };
@@ -177,25 +183,35 @@ export class CrossArb {
     return {
       bond: { asks: ownPrefix(bond.asks, own.bondAsks), bids: ownPrefix(bond.bids, own.bondBids) },
       peg: { asks: ownPrefix(peg.asks, own.pegAsks), bids: ownPrefix(peg.bids, own.pegBids) },
+      direct: { asks: ownPrefix(direct.asks, own.usdcAsks ?? []), bids: ownPrefix(direct.bids, own.usdcBids ?? []) },
     };
   }
 
-  /** USDC received for selling x LBOND on the SDEX route LBOND -> lUSDC -> USDC. */
+  /** USDC received for selling x LBOND on the SDEX: route LBOND -> lUSDC -> USDC, or the direct LBOND/USDC book if better. */
   sdexSell(b, x) {
+    let best = null;
     const l = walkBids(b.bond, x);
-    if (l.filled < x * 0.9995) return null;
-    const u = walkBids(b.peg, l.proceeds);
-    if (u.filled < l.proceeds * 0.9995) return null;
-    return { usdc: u.proceeds, avg: u.proceeds / x };
+    const u = l.filled >= x * 0.9995 ? walkBids(b.peg, l.proceeds) : null;
+    if (u && u.filled >= l.proceeds * 0.9995) best = { usdc: u.proceeds, avg: u.proceeds / x, venue: 'route' };
+    const d = b.direct ? walkBids(b.direct, x) : null;
+    if (d && d.filled >= x * 0.9995 && (!best || d.proceeds > best.usdc)) best = { usdc: d.proceeds, avg: d.proceeds / x, venue: 'direct' };
+    return best;
   }
 
-  /** USDC needed to buy x LBOND on the SDEX route USDC -> lUSDC -> LBOND. */
+  /** USDC needed to buy x LBOND on the SDEX: route USDC -> lUSDC -> LBOND, or the direct LBOND/USDC book if cheaper. */
   sdexBuy(b, x) {
+    let best = null;
     const l = walkAsks(b.bond, x);
-    if (l.filled < x * 0.9995) return null;
-    const u = walkAsks(b.peg, l.cost);
-    if (u.filled < l.cost * 0.9995) return null;
-    return { usdc: u.cost, avg: u.cost / x };
+    const u = l.filled >= x * 0.9995 ? walkAsks(b.peg, l.cost) : null;
+    if (u && u.filled >= l.cost * 0.9995) best = { usdc: u.cost, avg: u.cost / x, venue: 'route' };
+    const d = b.direct ? walkAsks(b.direct, x) : null;
+    if (d && d.filled >= x * 0.9995 && (!best || d.cost < best.usdc)) best = { usdc: d.cost, avg: d.cost / x, venue: 'direct' };
+    return best;
+  }
+
+  /** Path payment hops for an SDEX leg priced by sdexSell/sdexBuy. */
+  sdexPath(venue) {
+    return venue === 'direct' ? [] : [this.bot.assets.lusdc];
   }
 
   /** Best opportunity right now, or null. Costs 2-6 quote_swap simulations. */
@@ -219,7 +235,7 @@ export class CrossArb {
         const cost = out * q.avgPrice;
         const sell = this.sdexSell(b, out);
         if (!sell) break;
-        cands.push({ dir: 'pool->sdex', budget, out, cost, revenue: sell.usdc, profit: sell.usdc - cost, edgeBps: ((sell.usdc - cost) / cost) * 1e4, poolPrice: q.avgPrice, sdexPrice: sell.avg });
+        cands.push({ dir: 'pool->sdex', budget, out, cost, revenue: sell.usdc, profit: sell.usdc - cost, edgeBps: ((sell.usdc - cost) / cost) * 1e4, poolPrice: q.avgPrice, sdexPrice: sell.avg, venue: sell.venue });
       }
     }
     // direction 2: buy LBOND on the SDEX, sell it to the pool
@@ -232,7 +248,7 @@ export class CrossArb {
         if (proceeds <= 0 || q.partial) break;
         const buy = this.sdexBuy(b, x);
         if (!buy) break;
-        cands.push({ dir: 'sdex->pool', x, out: x, cost: buy.usdc, revenue: proceeds, profit: proceeds - buy.usdc, edgeBps: ((proceeds - buy.usdc) / buy.usdc) * 1e4, poolPrice: q.avgPrice, sdexPrice: buy.avg });
+        cands.push({ dir: 'sdex->pool', x, out: x, cost: buy.usdc, revenue: proceeds, profit: proceeds - buy.usdc, edgeBps: ((proceeds - buy.usdc) / buy.usdc) * 1e4, poolPrice: q.avgPrice, sdexPrice: buy.avg, venue: buy.venue });
       }
     }
     const good = cands.filter((c) => c.edgeBps >= s.crossMinEdgeBps && c.profit >= s.crossMinProfit).sort((a, c) => c.profit - a.profit);
@@ -280,24 +296,25 @@ export class CrossArb {
         log.act('cross', `${tag} POOL BUY  ${fromStroops(got)} LBOND (avg ${c.poolPrice.toFixed(5)} USDC incl fee)`, sw.hash);
         const expected = this.sdexSell(await this.books(), Number(got) / E7);
         const destMin = amt7Floor((expected ? expected.usdc : c.revenue) * 0.996);
+        const venue = expected?.venue ?? c.venue;
         const sell = await chain.submit({
           label: 'arb',
           memo: 'lotus cross sell',
-          ops: [Operation.pathPaymentStrictSend({ sendAsset: assets.lbond, sendAmount: fromStroops(got), destination: acct.arb.pub, destAsset: assets.usdc, destMin, path: [assets.lusdc] })],
+          ops: [Operation.pathPaymentStrictSend({ sendAsset: assets.lbond, sendAmount: fromStroops(got), destination: acct.arb.pub, destAsset: assets.usdc, destMin, path: this.sdexPath(venue) })],
         });
         hashes.push(sell.hash);
         fees += sell.feeCharged ?? 0n;
         const pp = parsePathPayment(sell.result);
         if (pp.ok) fills.push(...pp.fills.map((f) => bot.who(f.seller)));
         bot.stats.fills += pp.ok ? pp.fills.length : 0;
-        log.act('cross', `${tag} SDEX SELL ${fromStroops(got)} LBOND for ${pp.ok ? pp.delivered.amount : '?'} USDC via ${RC}`, sell.hash);
+        log.act('cross', `${tag} SDEX SELL ${fromStroops(got)} LBOND for ${pp.ok ? pp.delivered.amount : '?'} USDC ${venue === 'direct' ? 'on LBOND/USDC' : `via ${RC}`}`, sell.hash);
       } else {
         const destAmount = amt7Floor(c.x);
         const sendMax = amt7Ceil(c.cost * 1.004 + 0.00001);
         const buy = await chain.submit({
           label: 'arb',
           memo: 'lotus cross buy',
-          ops: [Operation.pathPaymentStrictReceive({ sendAsset: assets.usdc, sendMax, destination: acct.arb.pub, destAsset: assets.lbond, destAmount, path: [assets.lusdc] })],
+          ops: [Operation.pathPaymentStrictReceive({ sendAsset: assets.usdc, sendMax, destination: acct.arb.pub, destAsset: assets.lbond, destAmount, path: this.sdexPath(c.venue) })],
         });
         hashes.push(buy.hash);
         fees += buy.feeCharged ?? 0n;
@@ -305,7 +322,7 @@ export class CrossArb {
         const pp = parsePathPayment(buy.result);
         if (pp.ok) fills.push(...pp.fills.map((f) => bot.who(f.seller)));
         bot.stats.fills += pp.ok ? pp.fills.length : 0;
-        log.act('cross', `${tag} SDEX BUY  ${destAmount} LBOND (avg ${c.sdexPrice.toFixed(5)} USDC via ${RC})`, buy.hash);
+        log.act('cross', `${tag} SDEX BUY  ${destAmount} LBOND (avg ${c.sdexPrice.toFixed(5)} USDC ${c.venue === 'direct' ? 'on LBOND/USDC' : `via ${RC}`})`, buy.hash);
         const sw = await pool.swap('arb', false, toStroops(destAmount), stroops(c.revenue * 0.995));
         hashes.push(sw.hash);
         fees += sw.feeCharged ?? 0n;

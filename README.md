@@ -17,6 +17,21 @@ Depth is idle capital. A resting order earns nothing, and an AMM position forces
 
 Stellar has a specific version of this. The network already carries yield-bearing RWAs (Ondo USDY, Etherfuse Stablebonds). The asset side of a bond pair earns while it sits; the quote side, USDC, does not.
 
+## One order, four places to wait
+
+A liquidity provider creates one **range limit order** (sell LBOND across a price range, or USDC waiting to buy it) and chooses, at creation, where it waits:
+
+| | Yield off | Earn yield (USDC leg in DeFindex on Blend) |
+|---|---|---|
+| **Lotus pool** | directional position on the idle pool · 1 signature | directional position on the vault-backed pool · 1 signature |
+| **SDEX** | ladder of offers quoted in USDC · 1 signature | ladder quoted in the receipt `lUSDCb` · 1 signature (sell) or 2 (buy: deposit, then offers) |
+
+Each bin of the range becomes one SDEX offer at the same price and size, so the order is the same wherever it waits. The choice is made once, at creation; there is no migration of a live position, so no partially filled position ever has to be moved.
+
+The buy-side receipt order needs two transactions because a Soroban call must be the only operation of its transaction. The app has both signed up front and only submits the offers once the deposit has succeeded; if the deposit fails nothing moves, and if the offers fail the user simply holds the receipt, redeemable at par.
+
+Curator rule: yield is not offered for a pool **bid** whose range starts within 10 bins (about 1 percent) of the price, because every trade would recall that USDC from the vault: little yield, more failure risk. Sell orders (yield is on proceeds that wait) and receipt orders on the SDEX (a receipt in an open offer keeps earning) are never blocked. The rule lives in the app; the contracts are unchanged.
+
 ## Architecture
 
 ```mermaid
@@ -60,7 +75,7 @@ Three live testnet instances, all LBOND/USDC:
 
 | instance | yield | mode | contract |
 |---|---|---|---|
-| `lbond-usdc-idle` | none (USDC stays in the pool) | directional | [`CDOXTKGM…TN6CF`](https://stellar.expert/explorer/testnet/contract/CDOXTKGMK7MHEIOVXN5OBETMFUQATRQCB5NHFBFKCVUF5OUHQHVTN6CF) |
+| `lbond-usdc-idle` | none (USDC stays in the pool) | directional and two-way | [`CCE2ISQK…NHS4CA3`](https://stellar.expert/explorer/testnet/contract/CCE2ISQKVWZJAZL6FRW227WDVWXODWUZ75ZQXGPKJWXERRW64NHS4CA3) |
 | `lbond-usdc-defindex` | Blend, through our DeFindex vault | directional | [`CDNG7T2K…ZFPNG`](https://stellar.expert/explorer/testnet/contract/CDNG7T2KSDQ7ZYXHSDAM63RLLVPCQ5V6T5GRTXOOX47EZEMU636ZFPNG) |
 | `lbond-usdc-twoway` | none | directional and two-way | [`CC264FOW…SEI`](https://stellar.expert/explorer/testnet/contract/CC264FOWPI5R5FG4276ZIPGJ5OG5AP3IZ4RZNMC2KQNJDA7LQSFQ3SEI) |
 
@@ -174,7 +189,7 @@ Stated up front, because testnet is not mainnet.
 - **Keeper and vault liveness.** Distribution needs a keeper; the cap is on-chain so it can only delay or omit. Redemption at par depends on Blend having liquidity; if the pool is fully utilized redemption waits and the peg book trades at a discount.
 - **Junk bins.** Anyone can open tiny positions in many bins to lengthen swaps; mitigated by a minimum size per bin and `max_bins_per_swap`, not eliminated.
 - **No pause, upgrade path or audit.** The pool admin can only change `max_bins_per_swap`. The receipt issuers are not locked on testnet (on mainnet the issuer would be locked after `set_admin`, so the contract is the only minter).
-- **Older instances.** The `idle` and `defindex` pool instances were deployed from an earlier build of the same source (stages A to C); the `twoway` instance runs the final build. Redeploying them from the final source is on the list.
+- **Older instance.** The `defindex` pool instance runs an earlier build of the same source (stages A to C) and holds vault shares, so it was not redeployed; `idle` was redeployed from the final build on 26 October 2026 (the earlier one is kept under `retired_pools`).
 - **Two-way bid side** was tested in unit tests, not live in the UI.
 - Yield accrues on the USDC leg only. Mainnet cost and rates are unmeasured.
 

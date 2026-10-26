@@ -98,14 +98,17 @@ async function addPosition(page, side, amount, twoWay = false) {
     await btn.click();
     await page.waitForSelector('[data-testid="pool-twoway-note"]');
   }
+  // directional instances use the New order panel (venue = Lotus pool); the two-way instance keeps the legacy builder
+  const newOrder = (await page.locator('[data-testid="new-order"]').count()) > 0;
   await page.click(`[data-testid="pool-side"] [data-value="${side}"]`);
+  if (newOrder) await page.click('[data-testid="order-venue"] [data-value="pool"]');
   await page.fill('[data-testid="pool-amount"]', String(amount));
   await page.waitForTimeout(600);
-  const btn = page.locator('[data-testid="pool-submit"]');
+  const btn = page.locator(newOrder ? '[data-testid="order-submit"]' : '[data-testid="pool-submit"]');
   const label = await btn.innerText();
   if (await btn.isDisabled()) throw new Error(`submit disabled: "${label}"`);
   await btn.click();
-  return success(page, '[data-testid="position-builder"]');
+  return success(page, newOrder ? '[data-testid="new-order"]' : '[data-testid="position-builder"]');
 }
 
 async function swap(page, dir, amount) {

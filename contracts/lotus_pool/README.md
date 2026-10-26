@@ -6,7 +6,7 @@ Prior art: the owner's EVM version (`lotus-main`, one-way ladders with JIT yield
 
 * Interface, types, invariants and the deployments file: [`docs/pool-abi.md`](../../docs/pool-abi.md) (kept in sync with this crate).
 * Live instances: [`deployments/testnet.pool.json`](../../deployments/testnet.pool.json) (the front end and the bot poll it).
-* Wasm: `lotus_pool.wasm` is 43.9 KB with all four stages (limit 128 KB); the stage A-C build, which two of the live instances run, was 36.5 KB.
+* Wasm: `lotus_pool.wasm` is 43.9 KB with all four stages (limit 128 KB); the stage A-C build, which `lbond-usdc-defindex` still runs, was 36.5 KB.
 
 | stage | what | state |
 |---|---|---|
@@ -133,7 +133,7 @@ stellar contract build --package lotus_pool
 stellar contract optimize --wasm target/wasm32v1-none/release/lotus_pool.wasm
 ```
 
-Deploy on testnet (the recipe used for both live instances; `lotus-pool-admin` is a funded key):
+Deploy on testnet (the recipe used for the live instances; `lotus-pool-admin` is a funded key):
 
 ```sh
 stellar keys generate lotus-pool-admin --network testnet --fund
@@ -181,7 +181,7 @@ LBOND has `AUTH_REQUIRED`. For a contract holder the Stellar Asset Contract trea
 
 ## Testnet instances and measured costs
 
-Addresses and tx hashes are in `deployments/testnet.pool.json`: `lbond-usdc-idle` and `lbond-usdc-defindex` run the stage A-C build, `lbond-usdc-twoway` runs the final build (a superset; same swap costs within a few percent). Costs below are `simulateTransaction` with zero instruction leeway on testnet (limits per transaction: 400,000,000 instructions, 200 ledger entries read, 200 written, 132 KB); `fee` is the fee actually charged on-chain.
+Addresses and tx hashes are in `deployments/testnet.pool.json`: `lbond-usdc-defindex` runs the stage A-C build; `lbond-usdc-idle` (redeployed on 26 October 2026, the earlier instance is listed under `retired_pools`) and `lbond-usdc-twoway` run the final build (a superset; same swap costs within a few percent). Costs below are `simulateTransaction` with zero instruction leeway on testnet (limits per transaction: 400,000,000 instructions, 200 ledger entries read, 200 written, 132 KB); `fee` is the fee actually charged on-chain.
 
 Idle pool (`vault = null`):
 

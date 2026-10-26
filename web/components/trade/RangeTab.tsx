@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo } from "react";
 import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -143,6 +144,14 @@ export function RangeTab({
 
   return (
     <div className="space-y-2" data-testid="range-tab">
+      <Link
+        href="/pools"
+        data-testid="range-new-order-link"
+        className="block rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary transition hover:bg-primary/10"
+      >
+        Directional range order on the pool grid, waiting in the Lotus pool or on the SDEX, with or without yield: use{" "}
+        <span className="font-medium underline underline-offset-2">New order on Pools</span>. This tab is the free-form SDEX ladder (any levels, two-sided bands).
+      </Link>
       <Segmented value={form.mode} onChange={setMode} options={MODES} testId="range-mode" size="sm" />
       <p className="px-1 text-[11px] leading-relaxed text-mutedfg">
         {form.mode === "sell" &&

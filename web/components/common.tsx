@@ -321,7 +321,7 @@ export function Segmented<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: ReactNode; title?: string }[];
+  options: { value: T; label: ReactNode; title?: string; disabled?: boolean }[];
   className?: string;
   size?: "sm" | "md";
   testId?: string;
@@ -334,11 +334,14 @@ export function Segmented<T extends string>({
           type="button"
           title={o.title}
           data-value={o.value}
+          data-active={value === o.value ? "1" : "0"}
+          disabled={o.disabled}
           onClick={() => onChange(o.value)}
           className={cn(
             "flex-1 rounded-full font-medium transition",
             size === "sm" ? "px-2 py-1 text-[11px]" : "px-3 py-1.5 text-xs",
             value === o.value ? "bg-white/10 text-foreground" : "text-mutedfg hover:text-foreground",
+            o.disabled && "cursor-not-allowed text-mutedfg/40 hover:text-mutedfg/40",
           )}
         >
           {o.label}

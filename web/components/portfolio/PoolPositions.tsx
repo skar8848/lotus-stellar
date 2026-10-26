@@ -114,12 +114,17 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
           </Badge>
         ) : (
           <Badge variant="outline" className={cn("gap-1.5", inst.status === "live" ? "border-green/30 bg-green/10 text-green" : "border-border text-mutedfg")}>
-            {inst.status === "live" ? "Live" : inst.status === "idle" ? "Idle" : "Coming soon"}
+            {inst.status === "live" ? "Live" : inst.status === "idle" ? "Idle" : inst.status === "retired" ? "Retired" : "Coming soon"}
           </Badge>
         )
       }
       className="min-w-0"
     >
+      {inst.status === "retired" ? (
+        <p className="mb-3 rounded-xl border border-border bg-secondary/50 px-3 py-2 text-xs text-mutedfg" data-testid="pool-retired-note">
+          Retired instance (replaced by a redeploy): it takes no new orders, but you can still claim and remove the positions you left here.
+        </p>
+      ) : null}
       {inst.mock ? (
         <p className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary" data-testid="pool-mock-note">
           Local simulation (no pool contract deployed yet): nothing here is on-chain. Positions live in this browser only and claim and remove do not send transactions.
@@ -271,7 +276,8 @@ export function PoolPositions({
           <Empty>No Lotus pool is configured.</Empty>
         </Panel>
       ) : (
-        data.map((d) => <PoolSection key={d.inst.id} entry={d} address={address} network={network} onChanged={onChanged} />)
+        // a retired instance is only shown when this account still has positions there
+        data.filter((d) => d.inst.status !== "retired" || d.positions.length > 0 || !!d.error).map((d) => <PoolSection key={d.inst.id} entry={d} address={address} network={network} onChanged={onChanged} />)
       )}
     </section>
   );

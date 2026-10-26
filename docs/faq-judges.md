@@ -36,7 +36,7 @@ LBOND is `AUTH_REQUIRED`, `AUTH_REVOCABLE` and clawback-enabled on purpose (it m
 
 ## 9. What did the adversarial review of the pool find?
 
-No solvency or overpay bug. Findings and what we did: the vault pool can hit a footprint race (the vault's idle USDC flips by a stroop between simulation and inclusion), so the client re-simulates and resends; Bid LP USDC can be trapped if the LBOND leg is undeliverable (documented); a dead yield branch in the fuzz test (fixed); a fee-free mixed-bin swap in two-way mode (documented, low severity); junk-bin griefing (mitigated by minimum bin size and `max_bins_per_swap`). Two of the three live instances were deployed from an earlier build of the same source; redeploying them is on the list. Details in `contracts/lotus_pool/README.md`.
+No solvency or overpay bug. Findings and what we did: the vault pool can hit a footprint race (the vault's idle USDC flips by a stroop between simulation and inclusion), so the client re-simulates and resends; Bid LP USDC can be trapped if the LBOND leg is undeliverable (documented); a dead yield branch in the fuzz test (fixed); a fee-free mixed-bin swap in two-way mode (documented, low severity); junk-bin griefing (mitigated by minimum bin size and `max_bins_per_swap`). The vault-backed instance still runs an earlier build of the same source (it holds vault shares); the idle instance was redeployed from the final build. Details in `contracts/lotus_pool/README.md`.
 
 ## 10. What will fees look like on mainnet?
 

@@ -49,6 +49,15 @@ export const DEFAULTS = Object.freeze({
   mmIntervalSec: 8,
   ladder: 'leave', // leave: never cross the demo ladder / other accounts' offers ; take: bond bids may take the stale demo asks
 
+  // ---- LBOND/USDC book on the SDEX (mm_a quotes it from the same fair value; the app's "SDEX in USDC" destination)
+  usdcBook: 'on', // on: mm_a quotes LBOND/USDC, mm_b trades it, arb checks it against LBOND/receipt x receipt/USDC ; off: mm_a cancels its own LBOND/USDC offers
+  usdcLevels: 3, // quote levels per side on LBOND/USDC (same half spread and spacing as the receipt book)
+  usdcLevelSize: 30, // LBOND per level (scaled down when mm_a is short of USDC, after the peg bid is funded)
+  flowUsdcWeight: 0.35, // share of mm_b's flow trades that go to LBOND/USDC (when --usdc-book on)
+  triIntervalSec: 10, // arb: triangular check LBOND/USDC vs LBOND/receipt x receipt/USDC every N seconds
+  triMinEdgeBps: 6, // ... acts when the round trip clears this many bps
+  triMaxNotional: 100, // ... USDC per round trip (one atomic circular path payment)
+
   // ---- simulated LBOND fair value (NAV)
   navStart: 0, // 0 = continue from the saved state (or 1.00 on first run)
   navApr: 5, // simulated bond yield, % per year
@@ -121,6 +130,8 @@ export function buildSettings(args) {
   if (unknown.length) throw new Error(`unknown option(s): ${unknown.map((u) => '--' + u).join(', ')}`);
   if (!['leave', 'take'].includes(out.ladder)) throw new Error('--ladder must be "leave" or "take"');
   if (!['auto', 'on', 'off'].includes(out.pool)) throw new Error('--pool must be auto, on or off');
+  if (!['on', 'off'].includes(out.usdcBook)) throw new Error('--usdc-book must be on or off');
+  if (out.usdcLevels < 1 || out.usdcLevels > 8) throw new Error('--usdc-levels must be between 1 and 8');
   if (!['cheap', 'rich', 'both'].includes(out.crossDir)) throw new Error('--cross-dir must be cheap, rich or both');
   if (out.levels < 1 || out.levels > 8) throw new Error('--levels must be between 1 and 8');
   if (out.flowMinSec > out.flowMaxSec) throw new Error('--flow-min-sec must be <= --flow-max-sec');

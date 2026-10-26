@@ -6,7 +6,7 @@ Numbers below are examples. Use what the scripts actually seed and keep the on-s
 
 ## Before recording
 
-1. Re-seed the books: `cd scripts && node 04-seed-book.mjs --reset`. Then `npm run bot:demo -- --ladder take` is used only for a dry rehearsal; for the recording keep the bot off, or run it in a second terminal for background flow.
+1. Re-seed the books: `cd scripts && node 04-seed-book.mjs --reset --peg-size 150` (`peg_lp` holds only about 150 USDC; the default size would fail halfway) and optionally `--usdc-ladder` for the maker asks on LBOND/USDC. Then `npm run bot:demo -- --ladder take` is used only for a dry rehearsal; for the recording keep the bot off, or run it in a second terminal for background flow.
 2. Deposit into the active vault (v2, `lUSDCb`) at least 10 minutes before the keeper step, so `surplus()` has visible digits. `node 06-keeper-distribute.mjs --dry-run` shows what a distribution would pay.
 3. App: `cd web && npm run dev`, wallet connected (Freighter, funded testnet account with trustlines to USDC, LBOND, lUSDCb; LBOND authorized by `rwa_issuer`). `taker`, `blocked_taker`, `maker`, `peg_lp` and the bot accounts are in `deployments/`.
 4. One Lotus pool position ready to show: an Ask position on `lbond-usdc-defindex`, so the vault-backed USDC leg is visible.
@@ -24,9 +24,9 @@ Say: "A resting order is dead capital. Lotus fixes that two ways on Stellar: a d
 
 ### 0:20 - 0:55. The pool
 
-On screen: `/pools`, the Lotus pool tab, the `lbond-usdc-defindex` instance. Show depth by bin. In the range builder choose Ask, a range of five bins around par, 100 LBOND, confirm with the wallet. Show the position appear, then the explorer link.
+On screen: `/pools`, the "New order" panel. Draw a sell range of five bins around par, 100 LBOND. Show the two controls, "Where it waits: Pool | SDEX" and "Earn yield", and flip them once so the four summaries are visible. Pick Pool + Earn yield, read the one-line summary, sign once. Show the position appear, then the explorer link.
 
-Say: "This is the Lotus pool. I put one hundred LBOND, a simulated tokenized bond, on five price bins. Directional means inventory only goes down and proceeds only come in: if the price comes back, nothing trades back. The pool can also be two-way, and the USDC side can sit in a DeFindex vault on Blend, recalled just in time by the taker's swap."
+Say: "One range limit order: I sell one hundred LBOND, a simulated tokenized bond, across five prices. I choose where it waits: in the Lotus pool or on Stellar's orderbook, earning Blend yield or not. Directional means inventory only goes down and proceeds only come in: if the price comes back, nothing trades back. Here it waits in the pool and the proceeds earn in a DeFindex vault."
 
 ### 0:55 - 1:25. A swap takes it
 

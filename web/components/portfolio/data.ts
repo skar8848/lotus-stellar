@@ -28,8 +28,9 @@ export type PoolData = {
 };
 
 export async function loadPoolPositions(config: LotusConfig, net: NetCfg, address: string): Promise<PoolData[]> {
+  // retired instances too: an owner must still be able to claim / remove positions left there
   return Promise.all(
-    config.pools.map(async (inst): Promise<PoolData> => {
+    [...config.pools, ...(config.retiredPools ?? [])].map(async (inst): Promise<PoolData> => {
       if (!inst.mock && !inst.contract) return { inst, positions: [], error: null, skipped: true };
       try {
         return { inst, positions: await getPoolClient(net, inst).positionsOf(address), error: null };
@@ -72,6 +73,7 @@ export async function loadActivity(config: LotusConfig, net: NetCfg, address: st
   const names = new Map<string, string>();
   for (const s of config.strategies) if (s.lotusVault) names.set(s.lotusVault, `Lotus vault ${s.receipt.code}`);
   for (const p of config.pools) if (p.contract) names.set(p.contract, "Lotus pool");
+  for (const p of config.retiredPools ?? []) if (p.contract) names.set(p.contract, "Lotus pool (retired)");
   const vaults = config.strategies.filter(hasContract);
 
   const [ops, fills, events] = await Promise.all([

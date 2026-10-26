@@ -143,6 +143,19 @@ export function OpenOffers({
                   </td>
                   <td className="py-1.5 pr-2">
                     {d.market ? d.market.label : <AssetLink asset={toAssetRef(d.offer.selling)} network={network} label={`${d.sellCode} > ${d.buyCode}`} />}
+                    {d.market && d.market.kind !== "cash" && (d.side === "Bid" || d.market.kind === "bond") ? (
+                      <span
+                        className="ml-1.5 text-[10px] text-primary"
+                        title={
+                          d.side === "Bid"
+                            ? `The ${d.market.quote.code} (Lotus receipt) waiting in this offer keeps earning`
+                            : `Proceeds arrive as ${d.market.quote.code} (Lotus receipt) and start earning`
+                        }
+                        data-testid="offer-earning"
+                      >
+                        {d.side === "Bid" ? "earns" : "proceeds earn"}
+                      </span>
+                    ) : null}
                   </td>
                   <td className={cn("py-1.5 pr-2 font-medium", d.side === "Ask" ? "text-red" : d.side === "Bid" ? "text-green" : "text-mutedfg")}>{d.side}</td>
                   <td className="num py-1.5 pr-2 text-right">{fmt(d.price, 4, 4)}</td>

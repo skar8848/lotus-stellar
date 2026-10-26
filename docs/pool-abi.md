@@ -11,7 +11,7 @@ This file was written first as a draft (v0) and is now the contract's real inter
 
 ## Pair and units
 
-- BASE = `LBOND` (classic asset, AUTH_REQUIRED + REVOCABLE + CLAWBACK, issuer `rwa_issuer`). The pool contract address must be authorized by the issuer to hold it (SAC `set_authorized`; done for both live instances), and makers and takers need an authorized trustline. Compliance comes from the asset, not from pool code.
+- BASE = `LBOND` (classic asset, AUTH_REQUIRED + REVOCABLE + CLAWBACK, issuer `rwa_issuer`). The pool contract address must be authorized by the issuer to hold it (SAC `set_authorized`; done for every live instance), and makers and takers need an authorized trustline. Compliance comes from the asset, not from pool code.
 - QUOTE = `USDC` (Blend testnet USDC SAC `CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU`).
 - LBOND SAC (deployed for the pool): `CAVDLKQ2T4XBIQNY2WBUZKWQM6YDQ6NVX2N3HQ3P5Z2SBQ3VNZCBVBKE`.
 - All amounts are i128 stroops (7 decimals). Price = QUOTE per BASE, fixed point 1e7 (1.0000000 = 10_000_000). `quote = base * price / 1e7`.

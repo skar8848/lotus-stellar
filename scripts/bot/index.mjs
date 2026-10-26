@@ -41,7 +41,7 @@ function banner(bot) {
   log.raw(`vault     ${env.contractId}`);
   for (const [label, a] of Object.entries(bot.acct)) log.raw(`${label.padEnd(9)} ${a.pub}`);
   log.raw(
-    `settings  arb >= ${s.arbThresholdBps} bps | ${s.levels} levels x ${s.spacingBps} bps (size ${s.levelSize}) | flow ~1 trade/${s.flowMinSec}-${s.flowMaxSec}s | caps ${s.maxTxPerMin} tx/min ${s.maxOpsPerMin} ops/min ${s.httpPerMin} req/min | min ${s.minXlm} XLM | ladder=${s.ladder}${s.dryRun ? ' | DRY-RUN' : ''}${s.cleanup ? ' | cleanup on exit' : ''}`,
+    `settings  arb >= ${s.arbThresholdBps} bps | ${s.levels} levels x ${s.spacingBps} bps (size ${s.levelSize}) | flow ~1 trade/${s.flowMinSec}-${s.flowMaxSec}s | caps ${s.maxTxPerMin} tx/min ${s.maxOpsPerMin} ops/min ${s.httpPerMin} req/min | min ${s.minXlm} XLM | ladder=${s.ladder} | usdc-book=${s.usdcBook}${s.usdcBook === 'on' ? ` (${s.usdcLevels} x ${s.usdcLevelSize} LBOND)` : ''}${s.dryRun ? ' | DRY-RUN' : ''}${s.cleanup ? ' | cleanup on exit' : ''}`,
   );
 }
 

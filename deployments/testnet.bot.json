@@ -6,13 +6,14 @@
     "arb": "GAQWKGZ3XGFFU3TF5HKBC3JHY4OF4XSLXSPGXMAKC66POM3JC6PQ26XI"
   },
   "setup": {
-    "at": "2026-10-25T22:09:57.445Z",
+    "at": "2026-10-26T00:38:48.585Z",
     "plan": {
       "mm_a": {
         "usdc": 1000,
-        "lusdc": 600,
+        "lusdc": 400,
         "lbond": 20000,
-        "lbondTrust": true
+        "lbondTrust": true,
+        "usdcWorking": 400
       },
       "mm_b": {
         "usdc": 1000,
@@ -29,22 +30,22 @@
     },
     "balances_after_setup": {
       "mm_a": {
-        "XLM": "9999.6575208",
-        "USDC": "212.8485953",
-        "LBOND": "20183.6731455",
+        "XLM": "9999.5177103",
+        "USDC": "400.2834268",
+        "LBOND": "20404.0788437",
         "lbond_authorized": true,
-        "receipt": "599.0013347"
+        "receipt": "411.4640527"
       },
       "mm_b": {
-        "XLM": "9999.8510953",
-        "USDC": "477.1993763",
-        "LBOND": "19474.0247000",
+        "XLM": "9999.8366978",
+        "USDC": "520.8925928",
+        "LBOND": "19428.3847000",
         "lbond_authorized": true,
-        "receipt": "599.8997348"
+        "receipt": "599.4372168"
       },
       "arb": {
-        "XLM": "9999.9744749",
-        "USDC": "1012.8858093",
+        "XLM": "9999.9710446",
+        "USDC": "1015.1358093",
         "LBOND": "0.0000000",
         "lbond_authorized": true,
         "receipt": "0.0000000"
@@ -60,27 +61,28 @@
       "arb_usdc_trust_reset": "380cc2d0e7e565e0d877a623383ce1a46baa5053ef244b6b934b77d11ccf76c5",
       "arb_faucet": "361003b24713c2aac4e32f5f9777cd3990a82b4493011670303e1a18e6907ed8",
       "mm_a_deposit": "30887ff9127d1be9b3dd01f81b16cfaaeeac960b1170e0e678ee51330a57e571",
-      "mm_b_deposit": "34ee74eef2bf68d839024abeb741cc810565116fcecec8093dd2b07f5a74467a",
+      "mm_b_deposit": "677c97dc42989dd380a9291d2012fe5bcdd0b8bce1233ad10cb05ecd35a98a97",
       "mm_a_faucet_attempt_without_usdc": "fba110d648c011cbbdfc8103fec24a7ed5cde9d079d75bcd7663c15a21980fde",
       "mm_b_faucet_attempt_without_usdc": "0dd580e581b0ab8f4827d9ed29ef9c948c72375b839e9974f93879a27d8cbe17",
       "arb_faucet_attempt_without_usdc": "fcb892f6595358203a30319dbcfb164db079097c0f91e1acb013f6cf199ae93b",
       "mm_a_usdc_trust_reset": "f2463eb27b1c7edc327bdba7bf19b856364637b999280462ce459274cb345ad1",
       "mm_a_faucet": "1bdf97ae34e01a17bf8cbebc78b4a63ceb40ea81c80a6a50e47d63dc8d6e960a",
       "mm_a_redeem_legacy": "d8dae70e8ea2db22a385bfd675c3703d90883e5d838326b45b35fe35144f3c32",
-      "mm_b_redeem_legacy": "fda74cd67182ddd86e1c1ab4f96213c11ed8511f5d3c098e36fa21e9c48ec9d9"
+      "mm_b_redeem_legacy": "fda74cd67182ddd86e1c1ab4f96213c11ed8511f5d3c098e36fa21e9c48ec9d9",
+      "mm_a_usdc_working_redeem": "8d9e65562669a66de4c7ff23e390fab282f46df1aaf827bb0d18ddfd44134104"
     },
     "notes": [
       "The Blend testnet faucet pays 1,000 USDC only to accounts that have no USDC trustline yet; a second call returns an empty transaction."
     ]
   },
   "state": {
-    "nav": 1.000002688,
-    "nav_at": "2026-10-25T22:08:57.793Z",
+    "nav": 1.0000035584,
+    "nav_at": "2026-10-26T00:42:26.094Z",
     "note": "simulated LBOND NAV (1.00 at start, 5% APR accrual); accelerated demo runs do not persist"
   },
   "purpose": "Testnet. Market makers (mm_a, mm_b) and an arbitrageur (arb) operated by the Lotus team, trading assets the team issues (LBOND) or mints through lotus_vault (lUSDCb).",
   "roles": {
-    "mm_a": "market maker: quotes LBOND/lUSDCb (4 levels each side) and the USDC/lUSDCb peg book",
+    "mm_a": "market maker: quotes LBOND/lUSDCb (4 levels each side), LBOND/USDC (3 levels each side) and the USDC/lUSDCb peg book",
     "mm_b": "flow generator / taker; also the actor that moves the peg in the stress scenarios",
     "arb": "arbitrageur: buys lUSDCb under 1 USDC and redeems it, or mints it at par and sells above 1"
   },
@@ -100,7 +102,7 @@
     }
   },
   "lotus_vault_contract": "CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG",
-  "updated_at": "2026-10-25T22:09:57.445Z",
+  "updated_at": "2026-10-26T00:42:26.096Z",
   "legacy_receipt": {
     "code": "lUSDC",
     "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",

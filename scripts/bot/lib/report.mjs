@@ -46,6 +46,11 @@ export function printSummary(bot, { title = 'Run summary' } = {}) {
   } else {
     log.raw('  arb ledger       no cycle (the peg book never offered an edge above the threshold)');
   }
+  const tri = bot.components?.arb?.tri;
+  if (s.usdcBook === 'on' && tri?.checks) {
+    const r = (x) => (x == null ? 'n/a' : `${x.toFixed(1)} bps`);
+    log.raw(`  LBOND/USDC check ${tri.checks} triangular check(s) vs LBOND/${RC} x ${RC}/USDC: best round trip ${r(tri.best)}, worst ${r(tri.worst)} (acts at ${s.triMinEdgeBps}), ${tri.executed} executed, ${tri.failed} failed`);
+  }
   if (s.dryRun) log.raw('  (dry-run: nothing was submitted)');
   if (log.file) log.raw(`  full log: ${log.file}`);
 }
@@ -68,6 +73,26 @@ export async function cleanupOffers(bot) {
           log.err('cleanup', `${label} pool positions: ${e.message.split('\n')[0]}`);
         }
       }
+    }
+    // positions the bot still holds in RETIRED pool instances (a redeploy replaced the contract): close them so the
+    // LBOND / USDC comes back. Own positions only, best effort, never a reason to fail the cleanup.
+    try {
+      const { PoolAdapter, loadRetiredPoolEntries } = await import('./pool.mjs');
+      for (const entry of loadRetiredPoolEntries({ exceptContract: bot.poolAdapter?.contractId })) {
+        const old = new PoolAdapter(bot, entry);
+        for (const label of ['mm_a', 'mm_b', 'arb']) {
+          try {
+            for (const id of await old.positionsOf(bot.acct[label].pub)) {
+              const r = await old.removePosition(label, id);
+              log.act('cleanup', `${label}: closed position #${id} in retired pool ${entry.id} ${entry.contract} (${fromStroops(r.base ?? 0n)} LBOND, ${fromStroops(r.quote ?? 0n)} USDC back)`, r.hash);
+            }
+          } catch (e) {
+            log.warn('cleanup', `${label} positions in retired pool ${entry.id}: ${e.message.split('\n')[0]}`);
+          }
+        }
+      }
+    } catch (e) {
+      log.warn('cleanup', `retired pools: ${e.message.split('\n')[0]}`);
     }
     for (const label of ['mm_a', 'mm_b']) {
       try {

@@ -14,6 +14,12 @@
 //   --peg-size 200    size of each peg side (receipt / underlying)
 //   --level-size 100  LBOND per ladder level
 //   --levels 0.98,0.99,1.00,1.01,1.02
+//   --usdc-ladder     ALSO post a small maker ladder of LBOND asks on LBOND/USDC (off by default: the default run
+//                     is unchanged). The Lotus bot's mm_a quotes the tight LBOND/USDC market; this ladder only adds
+//                     resting depth further out, priced so it never sits inside mm_a's quotes.
+//   --usdc-levels 1.005,1.01,1.02   ask prices (USDC per LBOND) of that ladder
+//   --usdc-level-size 50            LBOND per level
+//   (--reset cancels ALL of maker's offers, the LBOND/USDC ladder included; add --usdc-ladder to re-post it too)
 
 import { parseArgs, saveClassic } from './lib/config.mjs';
 import { lotusContext } from './lib/lotus.mjs';
@@ -86,7 +92,7 @@ function assetFromHorizon(a) {
 
 async function main() {
   const args = parseArgs();
-  h1('04 - seed the SDEX books (peg + bond ladder)');
+  h1(`04 - seed the SDEX books (peg + bond ladder${args['usdc-ladder'] === true || args['usdc-ladder'] === 'true' ? ' + LBOND/USDC ladder' : ''})`);
   const lt = lotusContext();
   const { ctx, underlying, receipt } = lt;
   const rwa = lt.cfg.classic.rwa;
@@ -102,6 +108,17 @@ async function main() {
   const levels = String(args.levels ?? '0.98,0.99,1.00,1.01,1.02').split(',').map((s) => s.trim());
   const txs = {};
   const offers = { peg: {}, ladder: [] };
+  const usdcLadder = args['usdc-ladder'] === true || args['usdc-ladder'] === 'true';
+  const usdcLevels = String(args['usdc-levels'] ?? '1.005,1.01,1.02').split(',').map((s) => s.trim());
+  const usdcLevelSize = String(args['usdc-level-size'] ?? '50');
+  // maker's offers, by book (the LBOND/receipt ladder and the optional LBOND/USDC one are independent)
+  const isPair = (o, sel, buy) =>
+    o.selling.asset_code === sel.getCode() && o.selling.asset_issuer === sel.getIssuer() && o.buying.asset_code === buy.getCode() && o.buying.asset_issuer === buy.getIssuer();
+  const fracOf = (p) => {
+    const [i, f = ''] = p.split('.');
+    const d = 10 ** f.length;
+    return { n: Number(i) * d + Number(f || 0), d };
+  };
 
   if (args.reset) {
     step('--reset: cancelling existing offers');
@@ -158,17 +175,12 @@ async function main() {
   kv(`${rLabel} balance`, fmt(makerR?.balance ?? '0'));
   if (!makerR) die(`maker has no ${rLabel} trustline: run scripts/03-mint-receipt.mjs`);
 
-  const makerOffers = await listOffers(ctx, maker.publicKey());
+  const makerOffers = (await listOffers(ctx, maker.publicKey())).filter((o) => isPair(o, lbond, receipt));
   if (makerOffers.length && !args.reset) {
     ok(`maker already has ${makerOffers.length} open offer(s); not re-posting (use --reset to rebuild)`);
     offers.ladder = makerOffers.map((o) => ({ offer_id: o.id, amount: o.amount, price: o.price }));
   } else {
-    const ops = levels.map((p) => {
-      const [i, f = ''] = p.split('.');
-      const d = 10 ** f.length;
-      const n = Number(i) * d + Number(f || 0);
-      return Operation.manageSellOffer({ selling: lbond, buying: receipt, amount: levelSize, price: { n, d }, offerId: '0' });
-    });
+    const ops = levels.map((p) => Operation.manageSellOffer({ selling: lbond, buying: receipt, amount: levelSize, price: fracOf(p), offerId: '0' }));
     const r = await submitClassic(ctx, { source: maker, ops, memo: 'lotus bond ladder' });
     txs.bond_ladder = r.hash;
     const parsed = parseManageSellOffers(r.result);
@@ -181,9 +193,29 @@ async function main() {
   const makerAfter = balanceLine(await loadAccount(ctx, maker.publicKey()), lbond);
   kv(`${rwa.code} on account`, `${fmt(makerAfter.balance)}  (selling_liabilities ${fmt(makerAfter.selling_liabilities)}: still on the account, only reserved)`);
 
+  // ---------------------------------------------------------------- (c) optional LBOND/USDC ladder (--usdc-ladder)
+  if (args.reset && !usdcLadder && lt.cfg.classic.offers?.usdc_ladder?.length) offers.usdc_ladder = []; // cancelled by --reset, not re-posted
+  if (usdcLadder) {
+    step(`maker: ladder of ${usdcLevels.length} sell offers ${rwa.code} -> ${uLabel} (LBOND/USDC book, --usdc-ladder)`);
+    const existingU = (await listOffers(ctx, maker.publicKey())).filter((o) => isPair(o, lbond, underlying));
+    if (existingU.length) {
+      ok(`maker already has ${existingU.length} ${rwa.code}/${uLabel} offer(s); not re-posting (use --reset --usdc-ladder to rebuild)`);
+      offers.usdc_ladder = existingU.map((o) => ({ offer_id: o.id, amount: o.amount, price: o.price }));
+    } else {
+      const ops = usdcLevels.map((p) => Operation.manageSellOffer({ selling: lbond, buying: underlying, amount: usdcLevelSize, price: fracOf(p), offerId: '0' }));
+      const r = await submitClassic(ctx, { source: maker, ops, memo: 'lotus usdc ladder' });
+      txs.usdc_ladder = r.hash;
+      const parsed = parseManageSellOffers(r.result);
+      offers.usdc_ladder = usdcLevels.map((p, idx) => ({ offer_id: parsed[idx]?.offerId, amount: usdcLevelSize, price: p }));
+      for (const l of offers.usdc_ladder) ok(`posted: sell ${fmt(l.amount)} ${rwa.code} @ ${l.price} ${uLabel}  (offer ${l.offer_id})`);
+      link('tx', r.link);
+    }
+  }
+
   // ---------------------------------------------------------------- books
   await printBook(ctx, receipt, underlying, { title: `order book ${rLabel}/${uLabel}  (peg: price = ${uLabel} per 1 ${rLabel})` });
   await printBook(ctx, lbond, receipt, { title: `order book ${rwa.code}/${rLabel}  (ladder: price = ${rLabel} per 1 ${rwa.code})` });
+  if (usdcLadder) await printBook(ctx, lbond, underlying, { title: `order book ${rwa.code}/${uLabel}  (price = ${uLabel} per 1 ${rwa.code})` });
 
   saveClassic({ offers, tx: { seed_book: txs } });
   ok('wrote deployments/testnet.classic.json');

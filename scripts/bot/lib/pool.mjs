@@ -66,18 +66,47 @@ export function binFloor(stepBps, price) {
 
 // ------------------------------------------------------------------ deployment file
 
-/** The live LBOND/USDC pool entry of deployments/testnet.pool.json, or null. */
-export function loadPoolEntry({ id } = {}) {
-  let j;
+export const DEFAULT_POOL_ID = 'lbond-usdc-idle';
+const isLbondUsdc = (p) => p.contract && p.base?.code === 'LBOND' && p.quote?.code === 'USDC';
+
+function readPoolFile() {
   try {
-    j = readJson(POOL_JSON, null);
+    return readJson(POOL_JSON, null) ?? {};
   } catch {
-    return null; // half-written file: treat as "not there yet"
+    return {}; // half-written file (another process redeploying): treat as "not there yet"
   }
-  const live = (j?.pools ?? []).filter((p) => p.status === 'live' && p.contract && p.base?.code === 'LBOND' && p.quote?.code === 'USDC');
+}
+const readPools = () => readPoolFile().pools ?? [];
+/** Retired instances: the top-level `retired_pools[]`, plus any entry of `pools[]` whose status is not live. */
+const readRetired = () => {
+  const j = readPoolFile();
+  return [...(j.retired_pools ?? []), ...(j.pools ?? []).filter((p) => p.status !== 'live')];
+};
+
+/**
+ * The live LBOND/USDC pool entry of deployments/testnet.pool.json, or null. Only `status: "live"` counts: a
+ * `retired` instance (an old contract replaced by a redeploy, possibly under the same id) is never traded.
+ * Default: the live `lbond-usdc-idle` instance, else the first live one.
+ */
+export function loadPoolEntry({ id } = {}) {
+  const live = readPools().filter((p) => p.status === 'live' && isLbondUsdc(p));
   if (!live.length) return null;
   if (id) return live.find((p) => p.id === id) ?? null;
-  return live[0];
+  return live.find((p) => p.id === DEFAULT_POOL_ID) ?? live[0];
+}
+
+/**
+ * LBOND/USDC instances that are no longer live (`retired_pools[]`, or a non-live entry of `pools[]`), never one whose
+ * contract is also listed live, nor `exceptContract`. Used only to close the bot's own leftover positions.
+ */
+export function loadRetiredPoolEntries({ exceptContract } = {}) {
+  const liveContracts = new Set(readPools().filter((p) => p.status === 'live').map((p) => p.contract));
+  const seen = new Set();
+  return readRetired().filter((p) => {
+    if (!isLbondUsdc(p) || p.contract === exceptContract || liveContracts.has(p.contract) || seen.has(p.contract)) return false;
+    seen.add(p.contract);
+    return true;
+  });
 }
 
 const sideVal = (side) => xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(side === 'Bid' ? 'Bid' : 'Ask')]);

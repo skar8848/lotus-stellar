@@ -6,6 +6,8 @@
 //   bond bids  lUSDC -> LBOND   at fair * (1 - half - i*spacing)
 //   peg ask    lUSDC -> USDC    at 1 + 1 bp
 //   peg bid    USDC  -> lUSDC   at 1 - 1 bp
+//   usdc asks  LBOND -> USDC    at fair * (1 + half + i*spacing)         i = 0..usdcLevels-1   (--usdc-book on)
+//   usdc bids  USDC  -> LBOND   at fair * (1 - half - i*spacing)
 // Every tick it reads its own offers, diffs them against the target slots and sends at most ONE transaction:
 // only the slots whose price drifted more than --requote-bps, or whose size is below --refill-frac of target.
 // Quotes are clamped so they never cross another account's offers (the demo ladder, peg_lp, mm_b's shock
@@ -30,7 +32,8 @@ const r5 = (x) => Math.round(x * 1e5) / 1e5;
 /** amount for log lines: up to 4 decimals, trailing zeros trimmed */
 const t4 = (x) => Number(x).toFixed(4).replace(/\.?0+$/, '');
 const same = (a, b) => Math.abs(a - b) < 6e-8;
-const GROUPS = ['bondAsks', 'bondBids', 'pegAsks', 'pegBids'];
+const GROUPS = ['bondAsks', 'bondBids', 'usdcAsks', 'usdcBids', 'pegAsks', 'pegBids'];
+const EMPTY_BOOK = Object.freeze({ bids: [], asks: [] });
 
 function gauss() {
   let u = 0;
@@ -50,12 +53,13 @@ export class MarketMaker {
     this.resetNext = false;
     this.inflight = null;
     this.lastQuote = { bondAsk: null, bondBid: null, pegAsk: null, pegBid: null };
+    this.lastBudgetWarn = 0;
   }
 
   /** Classify raw Horizon offers of mm_a into the four groups (best price first). */
   classify(offers) {
     const K = this.keys;
-    const out = { bondAsks: [], bondBids: [], pegAsks: [], pegBids: [], other: [] };
+    const out = { bondAsks: [], bondBids: [], usdcAsks: [], usdcBids: [], pegAsks: [], pegBids: [], other: [] };
     for (const o of offers) {
       const sel = hKey(o.selling);
       const buy = hKey(o.buying);
@@ -66,12 +70,12 @@ export class MarketMaker {
       else if (sel === K.lusdc && buy === K.lbond) out.bondBids.push({ ...rec, quote: 1 / price, size: amount * price });
       else if (sel === K.lusdc && buy === K.usdc) out.pegAsks.push({ ...rec, quote: price, size: amount });
       else if (sel === K.usdc && buy === K.lusdc) out.pegBids.push({ ...rec, quote: 1 / price, size: amount * price });
+      else if (sel === K.lbond && buy === K.usdc) out.usdcAsks.push({ ...rec, quote: price, size: amount });
+      else if (sel === K.usdc && buy === K.lbond) out.usdcBids.push({ ...rec, quote: 1 / price, size: amount * price });
       else out.other.push(rec);
     }
-    out.bondAsks.sort((a, b) => a.quote - b.quote);
-    out.pegAsks.sort((a, b) => a.quote - b.quote);
-    out.bondBids.sort((a, b) => b.quote - a.quote);
-    out.pegBids.sort((a, b) => b.quote - a.quote);
+    for (const g of ['bondAsks', 'usdcAsks', 'pegAsks']) out[g].sort((a, b) => a.quote - b.quote);
+    for (const g of ['bondBids', 'usdcBids', 'pegBids']) out[g].sort((a, b) => b.quote - a.quote);
     return out;
   }
 
@@ -87,14 +91,15 @@ export class MarketMaker {
     return { minAsk: sub(book.asks, ownAsks), maxBid: sub(book.bids, ownBids) };
   }
 
-  targets(fair, own, bondBook, pegBook, bal) {
+  targets(fair, own, bondBook, pegBook, bal, usdcBook = EMPTY_BOOK) {
     const s = this.bot.settings;
     const half = s.halfSpreadBps / 1e4;
     const sp = s.spacingBps / 1e4;
     const ph = s.pegHalfSpreadBps / 1e4;
-    const t = { bondAsks: [], bondBids: [], pegAsks: [], pegBids: [] };
+    const t = { bondAsks: [], bondBids: [], usdcAsks: [], usdcBids: [], pegAsks: [], pegBids: [] };
     const bondF = this.foreignTouch(bondBook, own.bondAsks, own.bondBids);
     const pegF = this.foreignTouch(pegBook, own.pegAsks, own.pegBids);
+    const usdcF = this.foreignTouch(usdcBook, own.usdcAsks, own.usdcBids);
 
     for (let i = 0; i < s.levels; i++) {
       let ask = fair * (1 + half + i * sp);
@@ -105,6 +110,18 @@ export class MarketMaker {
       }
       t.bondAsks.push({ quote: r5(ask), size: s.levelSize * this.sizeScale });
       t.bondBids.push({ quote: r5(bid), size: s.levelSize * this.sizeScale });
+    }
+    // LBOND/USDC: the same fair value and ladder shape as LBOND/receipt (receipt = 1 USDC at par). This book is
+    // ALWAYS clamped against other accounts' offers, whatever --ladder says: app users trade it.
+    if (s.usdcBook === 'on') {
+      for (let i = 0; i < s.usdcLevels; i++) {
+        let ask = fair * (1 + half + i * sp);
+        let bid = fair * (1 - half - i * sp);
+        if (usdcF.minAsk != null) bid = Math.min(bid, usdcF.minAsk * (1 - 1e-4) * (1 - i * sp));
+        if (usdcF.maxBid != null) ask = Math.max(ask, usdcF.maxBid * (1 + 1e-4) * (1 + i * sp));
+        t.usdcAsks.push({ quote: r5(ask), size: s.usdcLevelSize * this.sizeScale });
+        t.usdcBids.push({ quote: r5(bid), size: s.usdcLevelSize * this.sizeScale });
+      }
     }
     let pAsk = 1 + ph;
     let pBid = 1 - ph;
@@ -117,15 +134,30 @@ export class MarketMaker {
     if (bal) {
       const lusdcNeed = t.bondBids.reduce((x, o) => x + o.size * o.quote, 0) + t.pegAsks[0].size;
       const usdcNeed = t.pegBids[0].size * t.pegBids[0].quote;
-      const lbondNeed = t.bondAsks.reduce((x, o) => x + o.size, 0);
+      const lbondNeed = t.bondAsks.reduce((x, o) => x + o.size, 0) + t.usdcAsks.reduce((x, o) => x + o.size, 0);
       const kL = Math.min(1, (bal.lusdc * 0.96) / Math.max(lusdcNeed, 1e-9));
-      const kU = Math.min(1, (bal.usdc * 0.96) / Math.max(usdcNeed, 1e-9));
+      // USDC: the peg bid is funded first (it defends the receipt peg), the LBOND/USDC bids get what is left. When the
+      // Lotus pool is on and mm_a has no Bid position yet, the USDC that position needs is kept aside as well.
+      const poolReserve = this.bot.poolAdapter && !this.bot.poolState?.mine?.Bid ? s.poolBidSize * 1.1 : 0;
+      const usdcAvail = Math.max(0, bal.usdc - poolReserve) * 0.96;
+      const kU = Math.min(1, usdcAvail / Math.max(usdcNeed, 1e-9));
+      const usdcBookNeed = t.usdcBids.reduce((x, o) => x + o.size * o.quote, 0);
+      const kUB = usdcBookNeed > 0 ? Math.min(1, Math.max(0, usdcAvail - usdcNeed * kU) / usdcBookNeed) : 1;
       const kB = Math.min(1, (bal.lbond * 0.96) / Math.max(lbondNeed, 1e-9));
       for (const o of t.bondBids) o.size *= kL;
       t.pegAsks[0].size *= kL;
       t.pegBids[0].size *= kU;
       for (const o of t.bondAsks) o.size *= kB;
+      for (const o of t.usdcAsks) o.size *= kB;
+      for (const o of t.usdcBids) o.size *= kUB;
+      // a level too small to be worth an offer is dropped (an existing one is then cancelled by the diff)
+      t.usdcBids = t.usdcBids.filter((o) => o.size >= 1);
+      t.usdcAsks = t.usdcAsks.filter((o) => o.size >= 1);
       if (kL < 0.999) this.bot.log.warn('mm_a', `${RC} inventory (${bal.lusdc.toFixed(2)}) limits the quotes: scaling ${RC}-funded sizes by ${kL.toFixed(2)}`);
+      if (kUB < 0.999 && Date.now() - this.lastBudgetWarn > 60_000) {
+        this.lastBudgetWarn = Date.now();
+        this.bot.log.warn('mm_a', `USDC inventory (${bal.usdc.toFixed(2)}${poolReserve ? `, ${poolReserve.toFixed(0)} kept for the pool Bid` : ''}) limits the LBOND/USDC bids: scaling them by ${kUB.toFixed(2)}${t.usdcBids.length < s.usdcLevels ? ` (${t.usdcBids.length}/${s.usdcLevels} levels left)` : ''}`);
+      }
     }
     return t;
   }
@@ -141,6 +173,10 @@ export class MarketMaker {
         return Operation.manageSellOffer({ selling: lusdc, buying: usdc, amount: amt7Floor(tg.size), price: priceFrac(tg.quote), offerId });
       case 'pegBids':
         return Operation.manageSellOffer({ selling: usdc, buying: lusdc, amount: amt7Floor(tg.size * tg.quote), price: invPriceFrac(tg.quote), offerId });
+      case 'usdcAsks':
+        return Operation.manageSellOffer({ selling: lbond, buying: usdc, amount: amt7Floor(tg.size), price: priceFrac(tg.quote), offerId });
+      case 'usdcBids':
+        return Operation.manageSellOffer({ selling: usdc, buying: lbond, amount: amt7Floor(tg.size * tg.quote), price: invPriceFrac(tg.quote), offerId });
       default:
         throw new Error(`unknown group ${group}`);
     }
@@ -163,7 +199,7 @@ export class MarketMaker {
   /** Diff existing vs target for one group -> [{kind, op, group, i}] */
   diffGroup(group, existing, targets, force) {
     const s = this.bot.settings;
-    const thr = (group.startsWith('bond') ? s.requoteBps : 0.2) / 1e4;
+    const thr = (group.startsWith('bond') || group.startsWith('usdc') ? s.requoteBps : 0.2) / 1e4;
     const out = [];
     for (let i = 0; i < targets.length; i++) {
       const tg = targets[i];
@@ -197,10 +233,12 @@ export class MarketMaker {
     const { chain, settings: s, assets, acct, log } = bot;
     if (bot.paused.mm) return;
     const f = bot.nav.step();
-    const [offersRaw, bondBook, pegBook] = await Promise.all([
+    const usdcOn = s.usdcBook === 'on';
+    const [offersRaw, bondBook, pegBook, usdcBook] = await Promise.all([
       chain.accountOffers(acct.mm_a.pub),
       chain.orderBook(assets.lbond, assets.lusdc),
       chain.orderBook(assets.lusdc, assets.usdc),
+      usdcOn ? chain.orderBook(assets.lbond, assets.usdc) : EMPTY_BOOK,
     ]);
     const own = this.classify(offersRaw);
     bot.mmState = { offers: own, at: Date.now() };
@@ -213,7 +251,7 @@ export class MarketMaker {
       await this.cancelAll(own);
       return;
     }
-    const tg = this.targets(fair, own, bondBook, pegBook, bal);
+    const tg = this.targets(fair, own, bondBook, pegBook, bal, usdcBook);
     const force = false;
     let changes = [];
     for (const g of GROUPS) changes.push(...this.diffGroup(g, own[g], tg[g], force));
@@ -221,16 +259,16 @@ export class MarketMaker {
 
     // order: cancels first, then the side that moves away from the other one first so a bid never sits above an ask
     const up = this.lastFair == null || fair >= this.lastFair;
-    const order = up ? ['bondAsks', 'bondBids', 'pegAsks', 'pegBids'] : ['bondBids', 'bondAsks', 'pegBids', 'pegAsks'];
+    const order = up ? ['bondAsks', 'bondBids', 'usdcAsks', 'usdcBids', 'pegAsks', 'pegBids'] : ['bondBids', 'bondAsks', 'usdcBids', 'usdcAsks', 'pegBids', 'pegAsks'];
     changes.sort((a, b) => (a.kind === 'cancel' ? -1 : 0) - (b.kind === 'cancel' ? -1 : 0) || order.indexOf(a.group) - order.indexOf(b.group) || a.i - b.i);
     const ops = changes.map((c) => c.op);
 
     const created = changes.filter((c) => c.kind === 'create').length;
     const updated = changes.filter((c) => c.kind === 'update').length;
     const cancelled = changes.filter((c) => c.kind === 'cancel').length;
-    const bondTouched = changes.some((c) => c.group.startsWith('bond'));
+    const bondTouched = changes.some((c) => c.group.startsWith('bond') || c.group.startsWith('usdc'));
     const range = (arr) => (arr.length ? `${arr[0].quote.toFixed(5)}..${arr[arr.length - 1].quote.toFixed(5)}` : '-');
-    const desc = `fair ${fair.toFixed(5)} | bond asks ${range(tg.bondAsks)} bids ${range(tg.bondBids)} | peg ${tg.pegBids[0].quote.toFixed(4)}/${tg.pegAsks[0].quote.toFixed(4)} | ${ops.length} op(s): ${created} new, ${updated} updated, ${cancelled} cancelled (${[...new Set(changes.map((c) => c.why ?? c.kind))].join(',')})`;
+    const desc = `fair ${fair.toFixed(5)} | bond asks ${range(tg.bondAsks)} bids ${range(tg.bondBids)}${usdcOn || own.usdcAsks.length || own.usdcBids.length ? ` | usdc asks ${range(tg.usdcAsks)} bids ${range(tg.usdcBids)}` : ''} | peg ${tg.pegBids[0].quote.toFixed(4)}/${tg.pegAsks[0].quote.toFixed(4)} | ${ops.length} op(s): ${created} new, ${updated} updated, ${cancelled} cancelled (${[...new Set(changes.map((c) => c.why ?? c.kind))].join(',')})`;
 
     if (s.dryRun) {
       log.dry('mm_a', `would re-quote: ${desc}`);
@@ -272,7 +310,7 @@ export class MarketMaker {
 export class Flow {
   constructor(bot) {
     this.bot = bot;
-    this.dir = { peg: 'buy', bond: 'sell' };
+    this.dir = { peg: 'buy', bond: 'sell', usdc: 'buy' };
     this.burstLeft = 0;
     this.pace = null; // {min, max} seconds: scripted override (demo bursts)
     this.lastRebalance = Date.now();
@@ -330,7 +368,12 @@ export class Flow {
       bot.mmState = { offers: new MarketMaker(bot).classify(await chain.accountOffers(acct.mm_a.pub)), at: Date.now() };
     }
     const own = bot.mmState.offers;
-    const [pegBook, bondBook] = await Promise.all([chain.orderBook(assets.lusdc, assets.usdc), chain.orderBook(assets.lbond, assets.lusdc)]);
+    const usdcOn = s.usdcBook === 'on';
+    const [pegBook, bondBook, usdcBook] = await Promise.all([
+      chain.orderBook(assets.lusdc, assets.usdc),
+      chain.orderBook(assets.lbond, assets.lusdc),
+      usdcOn ? chain.orderBook(assets.lbond, assets.usdc) : EMPTY_BOOK,
+    ]);
     const bal = bot.balances.mm_b ?? (await chain.refreshBalances('mm_b'));
 
     // some of the flow goes to the Lotus pool when it is live and mm_a has positions there
@@ -360,10 +403,17 @@ export class Flow {
     ];
     const routedOk = Math.random() < 0.12;
     if (routedOk) candidates.unshift(['routed', Math.random() < 0.5 ? 'buy' : 'sell']);
+    // LBOND/USDC: first choice for ~flowUsdcWeight of the trades, otherwise a fallback after the receipt books
+    if (usdcOn) {
+      const du = dirFor('usdc');
+      const pair = [['usdc', du], ['usdc', flip(du)]];
+      if (Math.random() < s.flowUsdcWeight) candidates.unshift(...pair);
+      else candidates.push(...pair);
+    }
 
     const size0 = this.pickSize();
     for (const [book, dir] of candidates) {
-      const plan = this.plan(book, dir, size0, { pegBook, bondBook, own, bal });
+      const plan = this.plan(book, dir, size0, { pegBook, bondBook, usdcBook, own, bal });
       if (!plan) continue;
       await this.executeBatch([plan]);
       if (book !== 'routed') this.dir[book] = dir;
@@ -433,6 +483,7 @@ export class Flow {
     const add = (k, v) => (used[k] = (used[k] ?? 0) + v);
     if (p.venue === 'peg') add(dir === 'buy' ? 'pegAsks' : 'pegBids', p.size);
     else if (p.venue === 'bond') add(dir === 'buy' ? 'bondAsks' : 'bondBids', p.size);
+    else if (p.venue === 'usdc') add(dir === 'buy' ? 'usdcAsks' : 'usdcBids', p.size);
     else {
       add(dir === 'buy' ? 'bondAsks' : 'bondBids', p.size);
       add(dir === 'buy' ? 'pegAsks' : 'pegBids', p.size);
@@ -440,7 +491,7 @@ export class Flow {
     return p;
   }
 
-  _plan(book, dir, size0, { pegBook, bondBook, own, bal }, used) {
+  _plan(book, dir, size0, { pegBook, bondBook, usdcBook = EMPTY_BOOK, own, bal }, used) {
     const { assets, acct } = this.bot;
     const dest = acct.mm_b.pub;
     const minSize = Math.max(0.5, this.bot.settings.flowSizeMin * 0.5);
@@ -486,6 +537,29 @@ export class Flow {
         book, dir, size, unit: 'LBOND', price: est.avg, venue: 'bond', sendAsset: assets.lbond,
         op: Operation.pathPaymentStrictSend({ sendAsset: assets.lbond, sendAmount: amt7(size), destination: dest, destAsset: assets.lusdc, destMin: amt7Floor(est.proceeds * 0.997), path: [] }),
         text: (r) => `SELL ${t4(size)} LBOND for ${t4(r.got)} ${RC}`,
+      };
+    }
+    if (book === 'usdc') {
+      // LBOND/USDC, direct: what an app user choosing "SDEX quoted in USDC" trades against
+      const levels = dir === 'buy' ? usdcBook.asks : usdcBook.bids;
+      const cap = this.capacity(levels, dir === 'buy' ? own.usdcAsks : own.usdcBids, used[dir === 'buy' ? 'usdcAsks' : 'usdcBids'] ?? 0) * 0.8;
+      const size = Math.min(size0, cap);
+      if (size < minSize) return null;
+      if (dir === 'buy') {
+        const est = walkAsks(usdcBook, size);
+        if (est.filled < size - 1e-9 || bal.usdc < est.cost * 1.01) return null;
+        return {
+          book, dir, size, unit: 'LBOND', price: est.avg, venue: 'usdc', sendAsset: assets.usdc,
+          op: Operation.pathPaymentStrictReceive({ sendAsset: assets.usdc, sendMax: amt7Ceil(est.cost * 1.003 + 0.00001), destination: dest, destAsset: assets.lbond, destAmount: amt7(size), path: [] }),
+          text: (r) => `BUY  ${t4(size)} LBOND for ${t4(r.spent)} USDC (LBOND/USDC book)`,
+        };
+      }
+      const est = walkBids(usdcBook, size);
+      if (est.filled < size - 1e-9 || bal.lbond < size * 1.001) return null;
+      return {
+        book, dir, size, unit: 'LBOND', price: est.avg, venue: 'usdc', sendAsset: assets.lbond,
+        op: Operation.pathPaymentStrictSend({ sendAsset: assets.lbond, sendAmount: amt7(size), destination: dest, destAsset: assets.usdc, destMin: amt7Floor(est.proceeds * 0.997), path: [] }),
+        text: (r) => `SELL ${t4(size)} LBOND for ${t4(r.got)} USDC (LBOND/USDC book)`,
       };
     }
     // routed: USDC -> lUSDC -> LBOND (buy) or LBOND -> lUSDC -> USDC (sell), one path payment touching both books
@@ -561,8 +635,14 @@ export class Flow {
       bot.mmState = { offers: new MarketMaker(bot).classify(await chain.accountOffers(acct.mm_a.pub)), at: Date.now() };
     }
     const own = bot.mmState.offers;
-    const [pegBook, bondBook] = await Promise.all([chain.orderBook(assets.lusdc, assets.usdc), chain.orderBook(assets.lbond, assets.lusdc)]);
+    const usdcOn = bot.settings.usdcBook === 'on';
+    const [pegBook, bondBook, usdcBook] = await Promise.all([
+      chain.orderBook(assets.lusdc, assets.usdc),
+      chain.orderBook(assets.lbond, assets.lusdc),
+      usdcOn ? chain.orderBook(assets.lbond, assets.usdc) : EMPTY_BOOK,
+    ]);
     const bal = bot.balances.mm_b ?? (await chain.refreshBalances('mm_b'));
+    const ctx = { pegBook, bondBook, usdcBook, own, bal };
     const used = {};
     const plans = [];
     let pegDir = Math.random() < 0.5 ? 'buy' : 'sell';
@@ -570,12 +650,14 @@ export class Flow {
       const roll = Math.random();
       let plan;
       if (roll < 0.5) {
-        plan = this.plan('peg', pegDir, this.pickSize(), { pegBook, bondBook, own, bal }, used);
+        plan = this.plan('peg', pegDir, this.pickSize(), ctx, used);
         if (plan) pegDir = pegDir === 'buy' ? 'sell' : 'buy';
       } else if (roll < 0.85) {
-        plan = this.plan('bond', Math.random() < 0.5 ? 'buy' : 'sell', this.pickSize(), { pegBook, bondBook, own, bal }, used);
+        // the bond leg goes to LBOND/USDC instead of LBOND/receipt about a third of the time when that book is on
+        const book = usdcOn && Math.random() < 0.35 ? 'usdc' : 'bond';
+        plan = this.plan(book, Math.random() < 0.5 ? 'buy' : 'sell', this.pickSize(), ctx, used);
       } else {
-        plan = this.plan('routed', Math.random() < 0.5 ? 'buy' : 'sell', this.pickSize(), { pegBook, bondBook, own, bal }, used);
+        plan = this.plan('routed', Math.random() < 0.5 ? 'buy' : 'sell', this.pickSize(), ctx, used);
       }
       if (plan) plans.push(plan);
     }
@@ -600,7 +682,7 @@ export class Flow {
     const want = (label, asset, code, have, low, donor, spare) => {
       if (have < low && spare > low) moves.push({ from: donor, to: label, asset, code, amount: Math.floor((spare - low) / 2) });
     };
-    want('mm_a', assets.usdc, 'USDC', a.usdc, bot.poolAdapter ? 260 : 150, 'mm_b', b.usdc - 300);
+    want('mm_a', assets.usdc, 'USDC', a.usdc, (bot.poolAdapter ? 260 : 150) + (s.usdcBook === 'on' ? s.usdcLevels * s.usdcLevelSize * 0.5 : 0), 'mm_b', b.usdc - 300);
     want('mm_a', assets.lusdc, `${RC}`, a.lusdc, 250, 'mm_b', b.lusdc - 150);
     want('mm_b', assets.lusdc, `${RC}`, b.lusdc, 60, 'mm_a', a.lusdc - 400);
     want('mm_b', assets.usdc, 'USDC', b.usdc, 60, 'mm_a', a.usdc - 250);

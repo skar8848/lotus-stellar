@@ -20,7 +20,9 @@ Speaker note: The people with the most inventory and cash are the least willing 
 - **Lotus pool** (Soroban): a range pool on price bins where an LP picks a direction. A directional position only sells its inventory and only receives proceeds. Optional two-way mode with crossback. Optional DeFindex vault under the USDC leg, so waiting liquidity earns Blend interest and is recalled just in time by the taker's swap.
 - **Receipt token** (`lUSDCb`): a classic Stellar asset, 1:1 against USDC, backed by a DeFindex vault lending on Blend. It trades on the SDEX, and an SDEX offer does not move funds, so an order quoted in it keeps earning.
 
-Speaker note: The pool is the new venue, the receipt token is the bridge to the venue Stellar already has. Same assets, same vault, two ways to be a liquidity provider.
+- **One order, four places to wait**, chosen at creation: Pool / SDEX × Yield off / on. 1 signature, 2 for a buy order quoted in the receipt.
+
+Speaker note: The pool is the new venue, the receipt token is the bridge to the venue Stellar already has. You draw one range limit order and pick where it waits.
 
 ---
 

@@ -610,28 +610,62 @@ export async function invokeContract(net: NetCfg, p: InvokeParams): Promise<{ ha
   }
 }
 
-async function invokeOnce(net: NetCfg, p: InvokeParams): Promise<{ hash: string; result: unknown }> {
-  const server = new rpc.Server(net.rpc);
-  p.onStage?.("building");
-  // Sequence from Horizon: a classic tx (e.g. the ChangeTrust before a first deposit) may have
-  // just been confirmed there, and RPC can lag it by a ledger.
-  const acct = await fetchAccount(net.horizon, p.source);
+/** Account object at the current Horizon sequence (Horizon, not RPC: a classic tx just confirmed there may lag on RPC). */
+async function sourceAccount(net: NetCfg, source: string): Promise<Account> {
+  const acct = await fetchAccount(net.horizon, source);
   if (!acct) throw new Error("source account not found on testnet (fund it with Friendbot first)");
-  const account = new Account(p.source, acct.sequence);
-  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: net.passphrase })
-    .addOperation(new Contract(p.contractId).call(p.method, ...p.args))
-    .setTimeout(120)
-    .build();
+  return new Account(source, acct.sequence);
+}
 
-  p.onStage?.("simulating");
+/**
+ * Build, simulate and assemble ONE contract invocation on `account` (its sequence is bumped by one, so a second
+ * transaction built on the same Account object gets the next sequence number). Returns the unsigned transaction.
+ */
+export async function prepareInvoke(
+  net: NetCfg,
+  account: Account,
+  call: { contractId: string; method: string; args: xdr.ScVal[] },
+): Promise<ReturnType<TransactionBuilder["build"]>> {
+  const server = new rpc.Server(net.rpc);
+  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: net.passphrase })
+    .addOperation(new Contract(call.contractId).call(call.method, ...call.args))
+    .setTimeout(180)
+    .build();
   const sim = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) throw new Error(prettySimError(sim.error));
-  const prepared = rpc.assembleTransaction(tx, sim).build();
+  return rpc.assembleTransaction(tx, sim).build();
+}
 
+/** A classic transaction on `account` (sequence bumped by one). */
+export function buildClassicTx(net: NetCfg, account: Account, ops: xdr.Operation[], feePerOp = "1000") {
+  const builder = new TransactionBuilder(account, { fee: feePerOp, networkPassphrase: net.passphrase });
+  for (const op of ops) builder.addOperation(op);
+  return builder.setTimeout(180).build();
+}
+
+async function invokeOnce(net: NetCfg, p: InvokeParams): Promise<{ hash: string; result: unknown }> {
+  p.onStage?.("building");
+  const account = await sourceAccount(net, p.source);
+  p.onStage?.("simulating");
+  const prepared = await prepareInvoke(net, account, p);
   p.onStage?.("signing");
   const signedXdr = await p.sign(prepared.toXDR());
-  const signed = TransactionBuilder.fromXDR(signedXdr, net.passphrase);
+  return sendSorobanSigned(net, signedXdr, p.onStage);
+}
 
+/**
+ * Send a signed Soroban transaction through RPC and wait for it. Throws with `failureKind` set
+ * ("footprint" / "bad-seq" / "other") and `included` = true when the transaction made it into a ledger
+ * (its sequence number is then consumed even though it failed).
+ */
+export async function sendSorobanSigned(
+  net: NetCfg,
+  signedXdr: string,
+  onStage?: (s: TxStage, note?: string) => void,
+): Promise<{ hash: string; result: unknown }> {
+  const server = new rpc.Server(net.rpc);
+  const signed = TransactionBuilder.fromXDR(signedXdr, net.passphrase);
+  const p = { onStage };
   p.onStage?.("sending");
   let sent = await server.sendTransaction(signed);
   // TRY_AGAIN_LATER = the node is busy: resend the SAME signed transaction (no new signature needed)
@@ -662,7 +696,11 @@ async function invokeOnce(net: NetCfg, p: InvokeParams): Promise<{ hash: string;
       const code = txResultCode(got.resultXdr);
       const detail = stringifyDeep([got.resultXdr, (got as { diagnosticEventsXdr?: unknown }).diagnosticEventsXdr]);
       const kind = classifyFailure({ txCode: code, detail });
-      throw Object.assign(new Error(code ? `failed on-chain: ${explainResultCode(code)}` : "transaction failed on-chain"), { failureKind: kind });
+      throw Object.assign(new Error(code ? `failed on-chain: ${explainResultCode(code)}` : "transaction failed on-chain"), {
+        failureKind: kind,
+        included: true,
+        hash: sent.hash,
+      });
     }
   }
   throw new Error(`timed out waiting for ${sent.hash}`);
@@ -742,6 +780,105 @@ export async function submitClassicChunked(
     }
   }
   return { hashes };
+}
+
+/** Error of submitSorobanThenClassic: which phase failed, and the first hash when the first phase went through. */
+export class PairError extends Error {
+  constructor(
+    message: string,
+    readonly phase: "first" | "second",
+    readonly firstHash: string | null,
+  ) {
+    super(message);
+    this.name = "PairError";
+  }
+}
+
+async function waitSequenceAbove(net: NetCfg, source: string, seq: string): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    const a = await fetchAccount(net.horizon, source).catch(() => null);
+    if (a && BigInt(a.sequence) > BigInt(seq)) return;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
+/**
+ * Two transactions that cannot be atomic (a Soroban transaction carries exactly one operation, so a contract call
+ * and classic offers never share a transaction): tx1 = the contract call at sequence s+1, tx2 = the classic ops at
+ * s+2. Both are built and signed up front (two signatures, one after the other), then tx1 is sent and awaited, and
+ * tx2 is sent ONLY if tx1 succeeded. If tx1 failed, tx2 is dropped and never sent (a tx1 that was included but
+ * failed consumed s+1, so tx2 would otherwise be valid: it must not leave this function). A footprint race on tx1
+ * (shared DeFindex vault, see txErrors.ts) rebuilds and re-signs BOTH, up to 2 times.
+ */
+export async function submitSorobanThenClassic(
+  net: NetCfg,
+  p: {
+    source: string;
+    sign: Signer;
+    call: { contractId: string; method: string; args: xdr.ScVal[] };
+    ops: xdr.Operation[];
+    onStage?: (s: TxStage, note?: string) => void;
+    labels?: [string, string];
+  },
+): Promise<{ hashes: [string, string]; result: unknown }> {
+  const [l1, l2] = p.labels ?? ["tx 1/2", "tx 2/2"];
+  let footprintRetries = 0;
+  let badSeqRetried = false;
+  for (;;) {
+    p.onStage?.("building", l1);
+    const account = await sourceAccount(net, p.source);
+    const startSeq = account.sequenceNumber();
+    p.onStage?.("simulating", l1);
+    const tx1 = await prepareInvoke(net, account, p.call); // s+1
+    const tx2 = buildClassicTx(net, account, p.ops); // s+2
+    p.onStage?.("signing", `${l1} (signature 1 of 2)`);
+    const s1 = await p.sign(tx1.toXDR());
+    p.onStage?.("signing", `${l2} (signature 2 of 2)`);
+    const s2 = await p.sign(tx2.toXDR());
+
+    let r1: { hash: string; result: unknown };
+    try {
+      r1 = await sendSorobanSigned(net, s1, (s) => p.onStage?.(s, l1));
+    } catch (e) {
+      const kind = (e as { failureKind?: string })?.failureKind ?? (isBadSeq(e) ? "bad-seq" : "other");
+      const included = (e as { included?: boolean })?.included === true;
+      // tx2 (signed, sequence s+2) is dropped here in every case: it is never sent after a failed tx1
+      if (kind === "footprint" && footprintRetries < 2) {
+        footprintRetries++;
+        if (included) await waitSequenceAbove(net, p.source, startSeq);
+        await new Promise((r) => setTimeout(r, 1200 * footprintRetries));
+        p.onStage?.("building", "vault state changed, rebuilding both transactions");
+        continue;
+      }
+      if (kind === "bad-seq" && !badSeqRetried) {
+        badSeqRetried = true;
+        continue;
+      }
+      const msg = kind === "footprint" ? VAULT_RACE_MESSAGE : e instanceof Error ? e.message : String(e);
+      throw new PairError(`${l1} failed, nothing moved and ${l2} was not sent: ${msg}`, "first", null);
+    }
+
+    try {
+      const r2 = await submitHorizonResend(net.horizon, s2, (s) => p.onStage?.(s, l2));
+      p.onStage?.("done");
+      return { hashes: [r1.hash, r2.hash], result: r1.result };
+    } catch (e) {
+      throw new PairError(`${l2} failed: ${e instanceof Error ? e.message : String(e)}`, "second", r1.hash);
+    }
+  }
+}
+
+/** Submit a signed classic tx; on tx_bad_seq (Horizon/core one ledger behind the previous tx) resend the same XDR. */
+async function submitHorizonResend(horizon: string, signedXdr: string, onStage?: (s: TxStage) => void): Promise<{ hash: string }> {
+  onStage?.("sending");
+  for (let i = 0; ; i++) {
+    try {
+      return await submitHorizon(horizon, signedXdr);
+    } catch (e) {
+      if (!isBadSeq(e) || i >= 3) throw e;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

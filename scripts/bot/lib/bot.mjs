@@ -84,8 +84,9 @@ export class Bot {
     const { PoolAdapter, loadPoolEntry } = await import('./pool.mjs');
     const entry = loadPoolEntry({ id: s.poolId || undefined });
     if (!entry) {
-      if (s.pool === 'on') throw new Error('--pool on, but deployments/testnet.pool.json has no live LBOND/USDC pool');
-      this.log.info('pool', 'no live LBOND/USDC pool in deployments/testnet.pool.json: pool legs disabled');
+      const what = s.poolId ? `no live LBOND/USDC pool with id "${s.poolId}" (retired instances are ignored)` : 'no live LBOND/USDC pool';
+      if (s.pool === 'on') throw new Error(`--pool on, but deployments/testnet.pool.json has ${what}`);
+      this.log.info('pool', `${what} in deployments/testnet.pool.json: pool legs disabled`);
       return null;
     }
     const adapter = new PoolAdapter(this, entry);
@@ -93,11 +94,28 @@ export class Bot {
       const info = await adapter.init();
       this.poolAdapter = adapter;
       this.log.info('pool', `using pool ${entry.id} ${entry.contract} (ABI ${info.abi}, bin step ${info.step} bps, fee ${info.fee} bps)`);
+      await this.warnRetiredPositions(entry.contract);
       return adapter;
     } catch (e) {
       if (s.pool === 'on') throw e;
       this.log.warn('pool', `pool legs disabled: ${firstLine(e)}`);
       return null;
+    }
+  }
+
+  /** Retired pool instances are never traded; say so when a bot account still has positions there (--cleanup closes them). */
+  async warnRetiredPositions(liveContract) {
+    try {
+      const { PoolAdapter, loadRetiredPoolEntries } = await import('./pool.mjs');
+      for (const entry of loadRetiredPoolEntries({ exceptContract: liveContract })) {
+        const old = new PoolAdapter(this, entry);
+        for (const label of Object.keys(this.acct)) {
+          const ids = await old.positionsOf(this.acct[label].pub).catch(() => []);
+          if (ids.length) this.log.warn('pool', `${label} still has ${ids.length} position(s) in RETIRED pool ${entry.id} ${entry.contract}: ignored while trading, closed by --cleanup`);
+        }
+      }
+    } catch {
+      /* informational only */
     }
   }
 

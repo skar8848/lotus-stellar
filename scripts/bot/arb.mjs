@@ -9,6 +9,12 @@
 // Each leg is a separate transaction (Soroban allows one operation per tx, so the classic leg and the
 // contract leg cannot be atomic). The redeem is simulated first and the book is re-read every tick, so a
 // cycle that stops half-way leaves lUSDC inventory that the next tick redeems at par.
+//
+// Triangular check (--usdc-book on): every --tri-interval-sec, when the peg needs nothing, the arbitrageur prices
+// LBOND on the direct LBOND/USDC book against the route LBOND <-> lUSDC <-> USDC. When a round trip clears
+// --tri-min-edge-bps it sends ONE circular path payment USDC -> ... -> USDC to itself (atomic: it either lands with
+// at least the expected USDC back, or fails as a whole for 0.00001 XLM). With --ladder leave it only trades against
+// offers of the bot's own accounts (mm_a, mm_b), like the cross-venue leg.
 
 import { Operation } from '@stellar/stellar-sdk';
 import { addr, assetLabel, fromStroops, i128, toStroops } from '../lib/stellar.mjs';
@@ -17,9 +23,21 @@ import { parsePathPayment } from './lib/xdr.mjs';
 import { StopBot } from './lib/chain.mjs';
 import { firstLine } from './lib/bot.mjs';
 import { RC } from './lib/names.mjs';
+import { MarketMaker } from './mm.mjs';
 
 const E7 = 1e7;
 const toNum = (stroops) => Number(stroops) / E7;
+const same = (a, b) => Math.abs(a - b) < 6e-8;
+
+/** The leading levels of a book side whose price matches one of `own` (offers of the bot's accounts). */
+function ownPrefix(levels, own) {
+  const out = [];
+  for (const l of levels) {
+    if (!own.some((o) => same(o.quote, l.price))) break;
+    out.push(l);
+  }
+  return out;
+}
 
 export class Arb {
   constructor(bot) {
@@ -29,6 +47,8 @@ export class Arb {
     this.inventoryDirty = true;
     this.lastWarn = new Map();
     this.busy = false;
+    this.lastTri = 0;
+    this.tri = { checks: 0, executed: 0, failed: 0, best: null, worst: null, lastLog: 0 };
   }
 
   warnOnce(key, msg, everyMs = 30_000) {
@@ -55,6 +75,7 @@ export class Arb {
       if (ask && ask.price <= 1 - thr + 1e-12) return await this.buyAndRedeem(book);
       if (bid && bid.price >= 1 + thr - 1e-12) return await this.mintAndSell(book);
       if (this.inventoryDirty) await this.settleInventory();
+      if (s.usdcBook === 'on' && Date.now() - this.lastTri >= s.triIntervalSec * 1000) await this.triTick();
     } finally {
       this.busy = false;
     }
@@ -267,6 +288,110 @@ export class Arb {
       `${tag} DONE ${side}: ${gross >= 0n ? '+' : ''}${fromStroops(gross)} USDC gross on ${fromStroops(size)} ${RC}, fees ${feeXlm.toFixed(5)} XLM (~${(feeXlm * s.xlmUsd).toFixed(5)} USD at ${s.xlmUsd}), net ${net >= 0 ? '+' : ''}${net.toFixed(5)} USD, cycle took ${cycle.seconds.toFixed(1)}s`,
     );
     return cycle;
+  }
+
+  // ------------------------------------------------------------ LBOND/USDC vs LBOND/receipt x receipt/USDC
+
+  /** The three SDEX books, cut down to the bot's own offers with --ladder leave. */
+  async triBooks() {
+    const { chain, assets, settings: s, acct } = this.bot;
+    const [bond, peg, direct] = await Promise.all([
+      chain.orderBook(assets.lbond, assets.lusdc),
+      chain.orderBook(assets.lusdc, assets.usdc),
+      chain.orderBook(assets.lbond, assets.usdc),
+    ]);
+    if (s.ladder === 'take') return { bond, peg, direct };
+    const mm = new MarketMaker(this.bot);
+    if (!this.bot.mmState.offers || Date.now() - this.bot.mmState.at > 30_000) {
+      this.bot.mmState = { offers: mm.classify(await chain.accountOffers(acct.mm_a.pub)), at: Date.now() };
+    }
+    const a = this.bot.mmState.offers;
+    const b = mm.classify(await chain.accountOffers(acct.mm_b.pub)); // mm_b rests offers only in the scenarios
+    const own = (g) => [...a[g], ...b[g]];
+    return {
+      bond: { asks: ownPrefix(bond.asks, own('bondAsks')), bids: ownPrefix(bond.bids, own('bondBids')) },
+      peg: { asks: ownPrefix(peg.asks, own('pegAsks')), bids: ownPrefix(peg.bids, own('pegBids')) },
+      direct: { asks: ownPrefix(direct.asks, own('usdcAsks')), bids: ownPrefix(direct.bids, own('usdcBids')) },
+    };
+  }
+
+  /** Round trips USDC -> LBOND -> USDC through both venues for a few sizes; returns all candidates (best first). */
+  triScan(b, usdcBal) {
+    const s = this.bot.settings;
+    const out = [];
+    for (let k = 0, x = 5; k < 6; k++, x *= 2) {
+      // A: buy LBOND on LBOND/USDC, sell it LBOND -> receipt -> USDC
+      const a = walkAsks(b.direct, x);
+      const r = walkBids(b.bond, x);
+      const u = r.filled >= x - 1e-9 ? walkBids(b.peg, r.proceeds) : null;
+      if (a.filled >= x - 1e-9 && u && u.filled >= r.proceeds - 1e-7 && a.cost <= s.triMaxNotional && a.cost <= usdcBal * 0.98) {
+        out.push({ dir: 'usdc-book->route', x, cost: a.cost, back: u.proceeds, profit: u.proceeds - a.cost, edgeBps: ((u.proceeds - a.cost) / a.cost) * 1e4, buyAt: a.avg, sellAt: u.proceeds / x });
+      }
+      // B: buy LBOND USDC -> receipt -> LBOND, sell it on LBOND/USDC
+      const rb = walkAsks(b.bond, x);
+      const ub = rb.filled >= x - 1e-9 ? walkAsks(b.peg, rb.cost) : null;
+      const d = walkBids(b.direct, x);
+      if (ub && ub.filled >= rb.cost - 1e-7 && d.filled >= x - 1e-9 && ub.cost <= s.triMaxNotional && ub.cost <= usdcBal * 0.98) {
+        out.push({ dir: 'route->usdc-book', x, cost: ub.cost, back: d.proceeds, profit: d.proceeds - ub.cost, edgeBps: ((d.proceeds - ub.cost) / ub.cost) * 1e4, buyAt: ub.cost / x, sellAt: d.avg });
+      }
+    }
+    return out.sort((p, q) => q.profit - p.profit);
+  }
+
+  async triTick() {
+    const { bot } = this;
+    const { chain, assets, settings: s, log, acct } = bot;
+    this.lastTri = Date.now();
+    const b = await this.triBooks();
+    const bal = bot.balances.arb && Date.now() - bot.balances.arb.at < 15_000 ? bot.balances.arb : await chain.refreshBalances('arb');
+    const all = this.triScan(b, bal.usdc);
+    this.tri.checks += 1;
+    const top = [...all].sort((p, q) => q.edgeBps - p.edgeBps)[0];
+    if (top) {
+      this.tri.best = this.tri.best == null ? top.edgeBps : Math.max(this.tri.best, top.edgeBps);
+      this.tri.worst = this.tri.worst == null ? top.edgeBps : Math.min(this.tri.worst, top.edgeBps);
+    }
+    const good = all.filter((c) => c.edgeBps >= s.triMinEdgeBps && c.profit >= s.arbMinProfit);
+    if (!good.length) {
+      if (Date.now() - this.tri.lastLog > 60_000) {
+        this.tri.lastLog = Date.now();
+        log.info('arb', top ? `tri check: no round trip between LBOND/USDC and LBOND/${RC} x ${RC}/USDC clears ${s.triMinEdgeBps} bps (best ${top.dir} ${top.edgeBps.toFixed(1)} bps${new Set(all.map((c) => c.dir)).size < 2 ? '; the other direction is not priceable on bot-owned depth' : ''})` : 'tri check: not enough bot-quoted depth on the three books to price a round trip');
+      }
+      return;
+    }
+    const c = good[0];
+    const tag = `tri #${this.tri.executed + 1}`;
+    const path = c.dir === 'usdc-book->route' ? [assets.lbond, assets.lusdc] : [assets.lusdc, assets.lbond];
+    if (s.dryRun) return log.dry('arb', `${tag}: would send ${c.cost.toFixed(4)} USDC round trip ${c.dir} (${c.edgeBps.toFixed(1)} bps, ~+${c.profit.toFixed(4)} USDC)`);
+    log.info('arb', `${tag}: ${c.dir} on ${c.x} LBOND: buy at ${c.buyAt.toFixed(5)}, sell at ${c.sellAt.toFixed(5)} USDC, edge ${c.edgeBps.toFixed(1)} bps (~+${c.profit.toFixed(4)} USDC)`);
+    const t0 = Date.now();
+    const sendAmount = amt7Ceil(c.cost);
+    const destMin = amt7Floor(c.cost + c.profit * 0.5); // keep at least half the expected edge, else the whole tx fails
+    let res;
+    try {
+      res = await chain.submit({
+        label: 'arb',
+        memo: 'lotus tri arb',
+        ops: [Operation.pathPaymentStrictSend({ sendAsset: assets.usdc, sendAmount, destination: acct.arb.pub, destAsset: assets.usdc, destMin, path })],
+      });
+    } catch (e) {
+      if (e instanceof StopBot) throw e;
+      this.tri.failed += 1;
+      log.err('arb', `${tag}: round trip failed as a whole (${firstLine(e)}); nothing moved`);
+      return;
+    }
+    const pp = parsePathPayment(res.result);
+    const fills = pp.ok ? pp.fills : [];
+    const got = pp.ok ? toStroops(pp.delivered.amount) : 0n;
+    const sent = toStroops(sendAmount);
+    bot.stats.fills += fills.length;
+    bot.stats.volumeLusdc += c.cost;
+    this.tri.executed += 1;
+    const gross = got - sent;
+    const feeXlm = Number(res.feeCharged ?? 0n) / E7;
+    const cycle = { n: bot.arbLedger.length + 1, side: `tri ${c.dir}`, size: fromStroops(sent), usdcIn: fromStroops(sent), usdcOut: fromStroops(got), gross: fromStroops(gross), avg: c.buyAt, feeXlm, net: Number(gross) / E7 - feeXlm * s.xlmUsd, seconds: (Date.now() - t0) / 1000, t0, tBuy: Date.now(), tDone: Date.now(), hashes: [res.hash], counterparties: [...new Set(fills.map((f) => bot.who(f.seller)))] };
+    bot.arbLedger.push(cycle);
+    log.act('arb', `${tag} DONE ${c.dir}: sent ${fromStroops(sent)} USDC, got back ${fromStroops(got)} USDC (${gross >= 0n ? '+' : ''}${fromStroops(gross)}), ${fills.length} fill(s) vs ${cycle.counterparties.join('+') || '?'}, fee ${feeXlm.toFixed(5)} XLM, one atomic tx`, res.hash);
   }
 
   totals() {

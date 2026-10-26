@@ -41,14 +41,16 @@ import { RC, setReceiptCode } from './lib/names.mjs';
 
 // What each account is provisioned with (USDC from the faucet, the receipt minted from that USDC, LBOND from the issuer).
 // The Blend faucet pays 1,000 USDC once per account (see fundUsdc), so USDC targets are 1,000.
+// usdcWorking: USDC mm_a keeps on hand for the LBOND/USDC book (its bids) on top of the peg bid and the pool Bid
+// position. It can only come from the receipt it already holds (redeemed at par), never from a second faucet call.
 export const PLAN = {
-  mm_a: { usdc: 1000, lusdc: 600, lbond: 20000, lbondTrust: true },
+  mm_a: { usdc: 1000, lusdc: 400, lbond: 20000, lbondTrust: true, usdcWorking: 400 },
   mm_b: { usdc: 1000, lusdc: 600, lbond: 20000, lbondTrust: true },
   arb: { usdc: 1000, lusdc: 0, lbond: 0, lbondTrust: true }, // LBOND trustline so it can run the cross-venue leg later
 };
 
 const purposeOf = () => ({
-  mm_a: `market maker: quotes LBOND/${RC} (4 levels each side) and the USDC/${RC} peg book`,
+  mm_a: `market maker: quotes LBOND/${RC} (4 levels each side), LBOND/USDC (3 levels each side) and the USDC/${RC} peg book`,
   mm_b: 'flow generator / taker; also the actor that moves the peg in the stress scenarios',
   arb: `arbitrageur: buys ${RC} under 1 USDC and redeems it, or mints it at par and sells above 1`,
 });
@@ -255,6 +257,37 @@ export async function runSetup(args = {}) {
       log.act('setup', `${role}: deposit(${amount} USDC) minted ${amount} ${RC} at par, fee ${feeXlm(res.feeCharged)} XLM`, res.hash);
     } catch (e) {
       log.err('setup', `${role}: deposit failed: ${e.message.split('\n')[0]}`);
+    }
+  }
+
+  // ---------------------------------------------------------------- USDC working capital (LBOND/USDC book)
+  // mm_a quotes LBOND/USDC, so it needs USDC for its bids. The faucet cannot pay twice, so the USDC comes from the
+  // receipt mm_a holds beyond its target, redeemed at par on lotus_vault (only what is not reserved by open offers).
+  // If that is not enough the bot sizes its LBOND/USDC bids down (see MarketMaker.targets).
+  for (const role of BOT_ROLES) {
+    const floor = PLAN[role].usdcWorking ?? 0;
+    if (!floor) continue;
+    const kp = keys[role];
+    const acc = await loadAccount(ctx, kp.publicKey());
+    const lineL = balanceLine(acc, lusdc);
+    const haveU = Number(balanceLine(acc, usdc)?.balance ?? 0);
+    const haveL = Number(lineL?.balance ?? 0);
+    const freeL = haveL - Number(lineL?.selling_liabilities ?? 0);
+    if (haveU >= floor - 1) {
+      log.info('setup', `${role}: holds ${fmt(String(haveU))} USDC (working capital target ${floor})`);
+      continue;
+    }
+    const amount = Math.floor(Math.min(Math.ceil(floor - haveU), haveL - PLAN[role].lusdc, freeL - 1)); // whole units
+    if (amount < 1) {
+      log.warn('setup', `${role}: ${fmt(String(haveU))} USDC, under the ${floor} target, and no spare ${RC} to redeem: the bot will size its LBOND/USDC bids down`);
+      continue;
+    }
+    try {
+      const res = await invokeContract(ctx, { contractId: env.contractId, method: 'redeem', args: [addr(kp.publicKey()), i128(toStroops(String(amount)))], source: kp, label: `redeem(${role})` });
+      txs[`${role}_usdc_working_redeem`] = res.hash;
+      log.act('setup', `${role}: redeemed ${amount} spare ${RC} at par for ${fromStroops(BigInt(res.returnValue ?? 0))} USDC (working capital for the LBOND/USDC book), fee ${feeXlm(res.feeCharged)} XLM`, res.hash);
+    } catch (e) {
+      log.warn('setup', `${role}: redeem for USDC working capital failed (${e.message.split('\n')[0]}); the bot will size its LBOND/USDC bids down`);
     }
   }
 

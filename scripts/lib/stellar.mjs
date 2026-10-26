@@ -18,17 +18,23 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 
+import { makeRpcServer } from './rpc.mjs';
+
 export { Address, Asset, Contract, Keypair, Operation, StrKey, nativeToScVal, scValToNative, xdr };
 
 const EXPERT = 'https://stellar.expert/explorer/testnet';
 
 // ------------------------------------------------------------------ clients
 
-/** Build Horizon + RPC clients from a merged config (see lib/config.mjs loadConfig). */
+/**
+ * Build Horizon + RPC clients from a merged config (see lib/config.mjs loadConfig).
+ * rpcServer retries transport failures on a backup RPC (lib/rpc.mjs): cfg.rpcFallback, else env
+ * STELLAR_RPC_FALLBACK, else deployments/testnet.rpc.secrets.json; none configured = plain rpc.Server.
+ */
 export function makeClients(cfg) {
   return {
     horizon: new Horizon.Server(cfg.horizon),
-    rpcServer: new rpc.Server(cfg.rpc),
+    rpcServer: makeRpcServer(cfg.rpc, cfg.rpcFallback !== undefined ? { fallback: cfg.rpcFallback } : {}),
     passphrase: cfg.passphrase,
     horizonUrl: cfg.horizon,
     friendbotUrl: cfg.friendbot ?? 'https://friendbot.stellar.org',

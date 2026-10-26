@@ -27,7 +27,8 @@ the DeFindex vault they wrap:
 | `testnet.strategies.secrets.json` | `S...` keys of v2 (`.v2`: vault manager, fee receiver, admin, keeper, issuer, two holders) and, after the first switch, a stash of the v1 admin/keeper/issuer keys (`.v1`) | **no** (`*.secrets.json` is gitignored) |
 | `switch-strategy.sh` | `status` / `v1` / `v2` helper, see below | yes |
 | `testnet.secrets.json`, `testnet.classic.json`, `testnet.classic.secrets.json` | state of the demo scripts (keys of v1 admin/keeper/issuer, RWA asset, maker/taker accounts, offers). Not touched by the v2 work | secrets no, classic.json yes |
-| `testnet.bot.json`, `testnet.bot.secrets.json`, `testnet.pool.json` | written by the bot and pool workflows (not described here) | n/a |
+| `testnet.bot.json`, `testnet.bot.secrets.json`, `testnet.pool.json` | written by the bot and pool workflows (not described here). `testnet.pool.json`: consumers read `pools[]` only; replaced instances are kept for history in `retired_pools[]` (status `retired`) | n/a |
+| `testnet.rpc.secrets.json` | `{"rpc_fallback": "https://..."}`: backup Soroban RPC (URL holds an API key) used by `scripts/lib/rpc.mjs` when the primary RPC fails at the transport level; env `STELLAR_RPC_FALLBACK` overrides it (`off` disables). Never copy it into `web/` or a tracked file | **no** |
 
 `testnet.strategies.json` is read at request time by the web app (`web/lib/config.ts`); the scripts never read it.
 

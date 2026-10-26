@@ -30,7 +30,8 @@ export type Strategy = {
   origin: "file" | "derived";
 };
 
-export type PoolStatus = "live" | "idle" | "coming-soon" | "mock";
+/** "retired": replaced by a redeploy; hidden from every pool view, still listed on /portfolio so owners can claim / remove. */
+export type PoolStatus = "live" | "idle" | "coming-soon" | "mock" | "retired";
 
 /** One Lotus POOL instance: a lotus_pool Soroban range pool for a pair (LBOND / USDC) and a yield strategy for its USDC leg. */
 export type PoolInstance = {
@@ -69,6 +70,8 @@ export type LotusConfig = {
   strategies: Strategy[];
   /** Lotus pool instances (testnet.pool.json); a single local simulation instance until that file exists. */
   pools: PoolInstance[];
+  /** Retired pool instances (testnet.pool.json retired_pools[], or any entry with status "retired"): Portfolio only. */
+  retiredPools: PoolInstance[];
   /** Named demo accounts (maker, taker, peg_lp, rwa_issuer, ...) merged from the deployment files. Public keys only. */
   accounts: Record<string, string>;
   /** Where each half came from: an absolute file path, or "example" / "derived" / "none". */

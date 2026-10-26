@@ -71,7 +71,7 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
   }, [market, config.rwa]);
 
   const [pay, setPay] = useState<AssetRef>(market.underlying);
-  const [recv, setRecv] = useState<AssetRef>(market.kind === "bond" ? market.base : market.receipt);
+  const [recv, setRecv] = useState<AssetRef>(market.kind === "peg" ? market.receipt : market.base);
   const [amt, setAmt] = useState("");
   const debounced = useDebounced(amt, 400);
   const validAmt = useMemo(() => {

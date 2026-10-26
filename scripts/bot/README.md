@@ -1,8 +1,8 @@
 # Lotus testnet bot
 
 A Node program (`scripts/bot/`) that keeps the Lotus testnet markets alive and defends the receipt's peg:
-an **arbitrageur** that restores the peg through `lotus_vault`, **market makers** that quote LBOND/receipt and
-USDC/receipt on the Stellar DEX (SDEX), a **flow generator** that trades against those quotes, a **keeper step** that
+an **arbitrageur** that restores the peg through `lotus_vault`, **market makers** that quote LBOND/receipt,
+USDC/receipt and LBOND/USDC on the Stellar DEX (SDEX), a **flow generator** that trades against those quotes, a **keeper step** that
 distributes the vault's interest, and, when the Lotus range pool is deployed, **pool legs** (directional pool
 positions, pool flow, cross-venue arbitrage). Testnet only: the process refuses to start on any other network.
 
@@ -12,11 +12,14 @@ DeFindex vault seeded into Blend, real interest). Nothing in the bot hard-codes 
 
 ## Where the volume comes from
 
-Trading activity on the Lotus testnet markets (LBOND/receipt and USDC/receipt on the SDEX, and the LBOND/USDC
-Lotus pool) comes from three accounts operated by the Lotus team: two market makers (`mm_a`, `mm_b`) and an
+Trading activity on the Lotus testnet markets (LBOND/receipt, USDC/receipt and LBOND/USDC on the SDEX, and the
+LBOND/USDC Lotus pool) comes from three accounts operated by the Lotus team: two market makers (`mm_a`, `mm_b`) and an
 arbitrageur (`arb`). They trade on testnet with assets the team issues (LBOND, issued by `rwa_issuer`) or
 mints through `lotus_vault` (the lUSDC / lUSDCb receipt, minted 1:1 against Blend testnet USDC taken from the public
 faucet). The trades are real on-chain transactions. The accounts are listed in `deployments/testnet.bot.json`.
+The same holds for the LBOND/USDC SDEX book behind the app's "SDEX quoted in USDC" destination: its resting
+quotes are mm_a's (plus, if `04-seed-book.mjs --usdc-ladder` was run, a few asks from the team's `maker` account)
+and its prints are mm_b's flow and the arbitrageur. Market-maker volume is our own accounts trading with each other.
 
 ## Quick start
 
@@ -28,6 +31,7 @@ npm run bot                      # arbitrageur + market maker + flow (+ pool leg
 npm run bot -- --duration 600    # ... for 10 minutes
 npm run bot -- --dry-run         # decide and log, send nothing
 npm run bot -- --cleanup         # on stop (Ctrl+C), cancel the bot's OWN open offers and close its pool positions
+npm run bot -- --usdc-book off   # do not quote LBOND/USDC (mm_a then cancels its own LBOND/USDC offers)
 npm run bot:depeg                # stress test: push the receipt under par, watch the arb restore it
 npm run bot -- --scenario premium      # mirror image: receipt bid above par (arb mints and sells)
 npm run bot:demo                 # ~3 minute scripted run for the video, ends with the keeper step
@@ -45,14 +49,17 @@ read `deployments/testnet.pool.json`.
 
 | account | role |
 | --- | --- |
-| `mm_a` | market maker: 4 levels each side on LBOND/receipt (fair value +/- 5 bps, 10 bps apart), the USDC/receipt peg book at 0.9999 / 1.0001, and (pool on) one Ask and one Bid position in the Lotus pool |
-| `mm_b` | flow generator: small clips against mm_a's quotes (log-normal sizes, random and clustered timing, both directions, both books, the odd routed USDC -> receipt -> LBOND trade); also the actor that moves the peg in the scenarios |
-| `arb` | arbitrageur: peg arbitrage via `deposit`/`redeem`, and the cross-venue arbitrage when the pool is live |
+| `mm_a` | market maker: 4 levels each side on LBOND/receipt (fair value +/- 5 bps, 10 bps apart), 3 levels each side on LBOND/USDC (same fair value and spacing, 30 LBOND each), the USDC/receipt peg book at 0.9999 / 1.0001, and (pool on) one Ask and one Bid position in the Lotus pool |
+| `mm_b` | flow generator: small clips against mm_a's quotes (log-normal sizes, random and clustered timing, both directions, all three books, the odd routed USDC -> receipt -> LBOND trade); also the actor that moves the peg in the scenarios |
+| `arb` | arbitrageur: peg arbitrage via `deposit`/`redeem`, the LBOND/USDC triangular check, and the cross-venue arbitrage when the pool is live |
 
 `bot:setup` per account: friendbot XLM; trustlines (the active receipt, LBOND; the USDC trustline is created by the Blend
 faucet itself); LBOND authorization signed by `rwa_issuer` (AUTH_REQUIRED asset); LBOND inventory from the issuer (20,000
 each for the market makers); 1,000 USDC from the Blend faucet; the receipt minted through `lotus_vault.deposit()` (600
-each for the market makers). **After a deployment switch** it also cancels the account's own offers in the previous
+each for mm_b, 400 for mm_a); **USDC working capital for mm_a** (target 400 USDC for its LBOND/USDC bids): since the
+faucet cannot pay twice, the shortfall is taken from mm_a's receipt beyond its 400 target, redeemed at par on
+`lotus_vault` (first run: 139 lUSDCb redeemed, tx `eee94d34...`); if there is nothing spare it warns and the bot sizes
+its LBOND/USDC bids down. **After a deployment switch** it also cancels the account's own offers in the previous
 receipt (from `deployments/testnet.contract.v1.json`) and redeems that receipt at par on the previous vault, because the
 faucet pays USDC only once per account (see Known limits): that USDC is the bot's capital.
 
@@ -62,7 +69,8 @@ faucet pays USDC only once per account (see Known limits): that USDC is the bot'
 | `deployments/testnet.bot.secrets.json` | `S...` keys of the three accounts, mode 0600. Covered by `deployments/.gitignore` (`*.secrets.json`); `bot:setup` runs `git check-ignore` and refuses to write the file if it is not ignored |
 | `scripts/bot/logs/` | one log file per run (git-ignored) |
 
-Nothing in `scripts/0*.mjs`, `scripts/lib/`, `contracts/` is modified; the bot imports from `scripts/lib/`.
+The bot imports from `scripts/lib/` and modifies nothing there or in `contracts/`. The only numbered script it touches
+is `scripts/04-seed-book.mjs`, which gained the opt-in `--usdc-ladder` flag (default run unchanged).
 
 ## What each component does
 
@@ -100,6 +108,33 @@ consumed) and mm_b only sells LBOND on the bond book. `--ladder take` quotes a n
 trade against the stale demo asks like any participant: its first bids take the 0.98 and 0.99 levels (200 LBOND) and its
 flow buys then eat the 1.00 level; `node scripts/04-seed-book.mjs --reset` re-posts them.
 
+### LBOND/USDC book (`--usdc-book on`, the default)
+
+The app offers four destinations at order creation; "SDEX quoted in USDC" needs a live LBOND/USDC book. mm_a quotes it
+from the **same simulated fair value** as LBOND/receipt (1 receipt = 1 USDC at par): `--usdc-levels` (3) levels per side,
+`--usdc-level-size` (30) LBOND each, `--half-spread-bps` / `--spacing-bps` shared with the receipt ladder. The same
+re-quote rule (one transaction per tick, only drifted or consumed slots), the same ordering (a bid never sits above
+an ask), and the same rule on other accounts' offers: quotes are clamped against the book minus mm_a's own offers
+and nothing mm_a does not own is cancelled or modified. On this book the clamp applies **whatever `--ladder` says**:
+app users rest orders here, `--ladder take` only concerns the stale demo ladder of LBOND/receipt.
+
+* **USDC budget**: USDC funds the peg bid first (it defends the receipt peg), then the LBOND/USDC bids get what is left,
+  after keeping `--pool-bid-size` x 1.1 aside while mm_a has no pool Bid position. When short, bid sizes are scaled
+  down and levels under 1 LBOND are dropped (a warning says by how much, at most once a minute). Asks only need LBOND.
+* **Flow**: about `--flow-usdc-weight` (35%) of mm_b's trades go to LBOND/USDC first (buy or sell LBOND, direct path
+  payment, only against mm_a's top of book); otherwise the book is a fallback after the receipt books. Bursts send a
+  third of their bond clips there.
+* **Consistency (`arb`)**: every `--tri-interval-sec` (10 s), when the peg needs nothing, the arbitrageur prices round
+  trips USDC -> LBOND -> USDC through LBOND/USDC one way and LBOND <-> receipt <-> USDC the other way, for 5 to 160 LBOND.
+  A round trip clearing `--tri-min-edge-bps` (6) is sent as **one circular path payment from arb to itself**
+  (`USDC -> [LBOND, receipt] -> USDC` or `USDC -> [receipt, LBOND] -> USDC`), with `destMin` = cost + half the expected
+  edge: atomic, it lands or fails as a whole (0.00001 XLM). With `--ladder leave` it only counts offers of the bot's
+  accounts. The run summary prints the number of checks and the best/worst round trip seen.
+* **Cross-venue**: the pool arbitrage also treats the direct LBOND/USDC book as an SDEX venue and uses whichever SDEX
+  leg (direct, or via the receipt) prices better.
+* `--usdc-book off`: mm_a quotes nothing there and cancels its own LBOND/USDC offers on its next tick; flow and the
+  triangular check skip the book.
+
 ### Flow generator (`mm.mjs`, `Flow`)
 
 mm_b trades at random intervals (exponential around `--flow-min-sec`..`--flow-max-sec`, 10 to 20 s by default, with
@@ -133,14 +168,20 @@ quoting. All contract views (`supply`, `vault_value`, `surplus`) are read with `
 **The profit in these scenarios is a transfer between the team's own accounts**: the arbitrageur is paid by mm_b, which
 creates the dislocation. They demonstrate the mechanism (detection time, cycle time, par redemption, cost), not revenue.
 **A depeg test also consumes real resting liquidity**, including `peg_lp`'s bid in the demo peg book. That is what a dump
-does. `node scripts/04-seed-book.mjs --reset` re-posts the demo books afterwards.
+does. `node scripts/04-seed-book.mjs --reset` re-posts the demo books afterwards (it cancels all of `peg_lp`'s and
+`maker`'s offers first; add `--usdc-ladder` to also re-post maker's optional LBOND/USDC asks at 1.005 / 1.01 / 1.02,
+50 LBOND each, priced outside mm_a's quotes so they never bind its clamps). Without `--usdc-ladder`, script 04
+behaves exactly as before and ignores LBOND/USDC.
 
 ### Lotus pool legs (`pool-legs.mjs`, `lib/pool.mjs`), behind a feature flag
 
 `--pool auto` (default) enables them when `deployments/testnet.pool.json` lists a live LBOND/USDC pool whose ABI
 version, bin step, fee and `price_at` match what the adapter expects; otherwise the bot runs exactly as without the
 pool. `--pool off` never uses it, `--pool on` makes a missing pool an error, `--pool-id lbond-usdc-defindex` selects
-the instance whose USDC sits in DeFindex (default: the first live one, `lbond-usdc-idle`).
+the instance whose USDC sits in DeFindex (default: the live `lbond-usdc-idle`, else the first live one).
+**Only `status: "live"` entries are used**: an instance marked `retired` (an old contract replaced by a redeploy, even
+under the same id) is never quoted or traded. At start the bot warns if one of its accounts still has positions in
+a retired instance, and `--cleanup` closes those (own positions only) so the LBOND/USDC comes back.
 The adapter (`lib/pool.mjs`) is the only code that knows the pool: `quote`, `swap`, `addPosition`, `removePosition`,
 `depth`, and `priceAt` / `binCeil` / `binFloor`, a bit-exact port of the contract's `price_at(bin)` checked against
 all 2,807 vectors of `contracts/lotus_pool/test-vectors.json`.
@@ -166,6 +207,7 @@ all 2,807 vectors of `contracts/lotus_pool/test-vectors.json`.
 * **Testnet only**: refuses unless the network passphrase is `Test SDF Network ; September 2015` and the Horizon and
   RPC URLs are testnet endpoints.
 * **Own accounts only**: offers and pool positions are listed per bot account and only those are cancelled or closed.
+  `--cleanup` cancels every open offer of mm_a and mm_b, so the LBOND/USDC quotes go too.
   `maker`, `peg_lp`, `taker` and the issuers are never written to (the issuer is used by `bot:setup` only, to authorize
   and fund the bot accounts; the keeper key signs `distribute()` in the keeper step).
 * **Kill switch**: Ctrl+C (SIGINT/SIGTERM) stops all loops; with `--cleanup` the bot's own offers are cancelled and its
@@ -215,6 +257,31 @@ liquidity; larger sizes than 150 were not tested. The two legs are separate tran
 cheap offers between detection and the buy; the buy then fails, and a failed classic transaction costs 0.00001 XLM
 (observed: a failed quote update was ledgered with a 100-stroop fee).
 
+### With the LBOND/USDC book (2026-10-26, v2 `lUSDCb`, default settings)
+
+| | normal, 270 s + `--cleanup` | `bot:depeg` | normal, 210 s (new `lbond-usdc-idle` pool) |
+| --- | --- | --- | --- |
+| transactions | 24 ok, 0 failed | 6 ok, 0 failed | 19 ok, 0 failed |
+| component error rate | 0% on 148 ticks | 0% on 9 ticks | 0% on 121 ticks |
+| flow trades (on LBOND/USDC) | 16 (1) | n/a | 15 (3) |
+| Horizon requests | 325 (68 per minute) | 47 | 276 (76 per minute) |
+| HTTP 429 incidents | 0 | 0 | 0 |
+| XLM spent in fees | 0.139 (pool positions) | 0.0037 | 0.117 |
+| triangular checks | 23, best round trip -106.9 bps, 0 sent | 2 | 18, best -107.3 bps, 0 sent |
+
+* mm_a's first re-quote added the 6 LBOND/USDC offers in the same transaction as the receipt books (10 operations).
+  Example LBOND/USDC prints: mm_b sold 6.87 LBOND at 0.99966 (tx `21fcd0ee...`) and bought 2 LBOND at 1.00054
+  (tx `45e39fa4...`), both against mm_a.
+* `--cleanup` cancelled all 16 of mm_a's offers (8 LBOND/receipt, 6 LBOND/USDC, 2 peg) and closed its 2 pool positions.
+* depeg: same result as before the change. 150 lUSDCb bought at 0.985 and redeemed at par, +2.25 USDC, peg restored
+  at T+11.3 s. The shock eats mm_a's 100 USDC peg bid, so after it mm_a's LBOND/USDC bids were scaled to 49% (USDC
+  budget warning); re-running `bot:setup` restored the 400 USDC from spare lUSDCb (142 redeemed, tx `8d9e6556...`).
+* Triangular check: with `--ladder leave` and maker's 0.99 / 1.00 demo asks on top of LBOND/receipt, mm_a's receipt
+  bids are clamped to 0.9899, so selling LBOND along the receipt route is about 1% worse than LBOND/USDC (-107 bps).
+  Buying along the route cannot be priced on bot-owned depth because the demo asks are on top. Nothing to arbitrage.
+  The circular transaction shape was checked once by hand: 1 USDC from `arb` to itself via [LBOND, lUSDCb], 3 fills
+  all against mm_a, 0.9892666 USDC back (tx `eecd1ca8f333db1e175be6df0f83d09217677d116bc8a4863fab5ba0f3a855b3`).
+
 ## Known limits
 
 * The classic leg and the contract leg of an arbitrage cycle are separate transactions (Soroban allows one operation
@@ -230,3 +297,10 @@ cheap offers between detection and the buy; the buy then fails, and a failed cla
 * Flow is sequential per account and each transaction waits for a ledger (about 5 s), so one account cannot print more
   than one transaction per ledger; bursts are therefore sent as one multi-operation transaction.
 * LBOND is a simulated bond: its price comes from the model above, not from any market.
+* LBOND/USDC depth is bounded by mm_a's USDC (about 400 working capital, shared with the peg bid and the pool Bid).
+  The faucet pays once per account, so `bot:setup` can only top it up from mm_a's spare receipt. After a depeg test,
+  re-run `bot:setup` or let the bids run smaller.
+* The triangular arbitrage has never fired inside a bot run (the books stayed consistent). Only its transaction shape
+  was checked on-chain, by hand (see above).
+* `04-seed-book.mjs --reset` re-posts `peg_lp`'s 200 USDC bid. On 2026-10-26 `peg_lp` held 150.09 USDC (its bid had
+  been eaten by earlier depeg tests), so pass `--peg-size 150` or less, or the script stops after cancelling.

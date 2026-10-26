@@ -33,6 +33,7 @@ export function poolYield(inst: PoolInstance, strategies: Strategy[]): { tone: Y
 export function poolStatusLabel(inst: PoolInstance): string {
   if (inst.mock) return "Local simulation";
   if (inst.status === "coming-soon") return "Coming soon";
+  if (inst.status === "retired") return "Retired";
   if (inst.status === "idle") return "Live (idle USDC)";
   return "Live";
 }

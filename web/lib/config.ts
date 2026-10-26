@@ -128,7 +128,7 @@ function parsePool(raw: unknown, idx: number, fallbackBase: AssetCfg, fallbackQu
   const contract = str(o.contract) || str(o.pool_contract) || str(o.lotus_pool_contract);
   const rawStatus = str(o.status);
   const status: PoolStatus =
-    rawStatus === "live" || rawStatus === "idle" || rawStatus === "coming-soon" ? rawStatus : "live";
+    rawStatus === "live" || rawStatus === "idle" || rawStatus === "coming-soon" || rawStatus === "retired" ? rawStatus : "live";
   const validContract = /^C[A-Z2-7]{55}$/.test(contract);
   if (!validContract && status !== "coming-soon") return null;
   const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
@@ -213,12 +213,25 @@ export function loadConfig(): LotusConfig {
   // Pools: testnet.pool.json when it yields at least one usable entry; otherwise ONE local simulation
   // instance so the pool UI is usable before the contract is deployed (clearly flagged `mock`).
   const rwa: AssetCfg = { code: k.rwa?.code || "LBOND", issuer: k.rwa?.issuer || null };
-  const poolFile = readJson<{ pools?: unknown[] }>(POOLS_FILE);
+  const poolFile = readJson<{ pools?: unknown[]; retired_pools?: unknown[] }>(POOLS_FILE);
   let pools: PoolInstance[] = [];
+  let retiredPools: PoolInstance[] = [];
   let poolsSource = "none";
   if (poolFile && Array.isArray(poolFile.data.pools)) {
-    pools = poolFile.data.pools.map((p, i) => parsePool(p, i, rwa, underlying)).filter((p): p is PoolInstance => p !== null);
+    const parsed = poolFile.data.pools.map((p, i) => parsePool(p, i, rwa, underlying)).filter((p): p is PoolInstance => p !== null);
+    // a retired instance is never offered as live, wherever it is listed
+    pools = parsed.filter((p) => p.status !== "retired");
+    retiredPools = parsed.filter((p) => p.status === "retired");
     if (pools.length > 0) poolsSource = poolFile.source;
+  }
+  if (poolFile && Array.isArray(poolFile.data.retired_pools)) {
+    retiredPools = [
+      ...retiredPools,
+      ...poolFile.data.retired_pools
+        .map((p, i) => parsePool(p, i, rwa, underlying))
+        .filter((p): p is PoolInstance => p !== null)
+        .map((p) => ({ ...p, status: "retired" as const })),
+    ];
   }
   if (pools.length === 0) {
     pools = [
@@ -253,6 +266,7 @@ export function loadConfig(): LotusConfig {
     blendPool: c.blend_pool || "",
     strategies,
     pools,
+    retiredPools,
     accounts: { ...publicAccounts(c.accounts), ...publicAccounts(k.accounts) },
     sources: {
       contract: contract?.source ?? "example",

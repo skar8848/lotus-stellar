@@ -1,6 +1,8 @@
-// The SDEX markets the app trades. Every market is quoted in a Lotus RECEIPT (lUSDC):
-//   BOND/receipt  : the tokenized bond (LBOND) priced in the yield-bearing receipt
-//   USDC/receipt  : the 1:1 peg book between the underlying and the receipt
+// The SDEX markets the app trades:
+//   BOND/receipt  : the tokenized bond (LBOND) priced in the yield-bearing receipt (one per Lotus vault)
+//   USDC/receipt  : the 1:1 peg book between the underlying and the receipt (one per Lotus vault)
+//   BOND/USDC     : the bond priced in plain USDC (no yield), once, after the active vault's markets. It is the
+//                   SDEX destination of a "New order" with yield off.
 // One pair per strategy, so a second Lotus vault adds its own markets automatically.
 
 import type { LotusConfig, Strategy } from "./config-types";
@@ -13,11 +15,12 @@ export type Market = {
   label: string;
   base: AssetRef;
   quote: AssetRef;
-  kind: "bond" | "peg";
-  /** The Lotus vault whose receipt is the quote asset. */
+  /** bond = BOND/receipt, peg = USDC/receipt, cash = BOND/USDC (quote is not a receipt) */
+  kind: "bond" | "peg" | "cash";
+  /** The Lotus vault whose receipt is the quote asset (for "cash": the active vault, for links only). */
   strategyId: string;
   strategyLabel: string;
-  /** The Lotus receipt (== quote). */
+  /** The Lotus receipt (== quote, except for "cash"). */
   receipt: AssetRef;
   /** The vault underlying (USDC). */
   underlying: AssetRef;
@@ -71,6 +74,24 @@ export function buildMarkets(config: LotusConfig): Market[] {
         receipt: s.receipt,
         underlying: s.underlying,
         blurb: `Peg book: ${s.underlying.code} against ${s.receipt.code}, redeemable 1:1 through the Lotus vault.`,
+      });
+    }
+    // BOND/USDC once, right after the active vault's markets
+    if (
+      !out.some((m) => m.kind === "cash") &&
+      assetReady(config.rwa) &&
+      assetReady(s.underlying) &&
+      !sameRef(config.rwa, s.underlying)
+    ) {
+      push({
+        base: config.rwa,
+        quote: s.underlying,
+        kind: "cash",
+        strategyId: s.id,
+        strategyLabel: s.label,
+        receipt: s.receipt,
+        underlying: s.underlying,
+        blurb: `${config.rwa.code} quoted in plain ${s.underlying.code}: no yield while an order waits (compare ${config.rwa.code}/${s.receipt.code}).`,
       });
     }
   }

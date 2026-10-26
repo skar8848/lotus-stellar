@@ -9,12 +9,11 @@ import { usePolling } from "@/lib/hooks";
 import { buildMarkets } from "@/lib/markets";
 import { assetKey, assetReady, fetchOffers, fmt } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import { Activity } from "./Activity";
 import { Balances } from "./Balances";
 import { PoolPositions } from "./PoolPositions";
 import { ReceiptPositions } from "./ReceiptPositions";
 import { Summary } from "./Summary";
-import { loadActivity, loadPoolPositions, loadSupplies } from "./data";
+import { loadPoolPositions, loadSupplies } from "./data";
 import { XLM, buildBalanceRows, loadPrices, poolValue, walletTotals, type PriceMap } from "./model";
 
 const NO_PRICES: PriceMap = {};
@@ -35,8 +34,6 @@ export function PortfolioClient() {
   const pools = usePolling(poolsFn, 10000, !!address);
   const suppliesFn = useCallback(() => loadSupplies(config, net), [config, net]);
   const supplies = usePolling(suppliesFn, 15000, !!address);
-  const activityFn = useCallback(() => (address ? loadActivity(config, net, address) : Promise.resolve({ rows: [], unavailable: [] })), [config, net, address]);
-  const activity = usePolling(activityFn, 30000, !!address);
 
   const priceMap = prices.data ?? NO_PRICES;
   const rows = useMemo(() => buildBalanceRows(config, acct.data, priceMap), [config, acct.data, priceMap]);
@@ -73,7 +70,6 @@ export function PortfolioClient() {
     offers.refresh();
     pools.refresh();
     supplies.refresh();
-    activity.refresh();
   };
 
   const notFunded = !!address && acct.data === null && acct.updatedAt !== null;
@@ -90,7 +86,7 @@ export function PortfolioClient() {
               {wallet.kind === "dev" ? " (dev wallet)" : ""}
             </>
           ) : (
-            "Balances, open offers, Lotus pool positions and activity of the connected account."
+            "Positions, open offers and balances of the connected account."
           )}
         </p>
       </div>
@@ -98,7 +94,7 @@ export function PortfolioClient() {
       {!address ? (
         <Panel title="Connect a wallet">
           <Empty className="py-8" >
-            <span data-testid="portfolio-connect-prompt">Connect a wallet (top right) to see your balances, open offers, pool positions and recent activity. Nothing is shown for an account you have not connected.</span>
+            <span data-testid="portfolio-connect-prompt">Connect a wallet (top right) to see your positions, open offers and balances. Nothing is shown for an account you have not connected.</span>
           </Empty>
         </Panel>
       ) : (
@@ -119,8 +115,6 @@ export function PortfolioClient() {
             offersCount={offers.data ? offers.data.length : null}
           />
 
-          <Balances rows={rows} network={config.network} priceNotes={priceNotes} loading={accountLoading} />
-
           <PoolPositions data={pools.data} address={address} network={config.network} onChanged={refreshAll} />
 
           <ReceiptPositions strategies={config.strategies} account={acct.data} supplies={supplies.data} network={config.network} loading={accountLoading} onChanged={refreshAll} />
@@ -137,7 +131,7 @@ export function PortfolioClient() {
             <OpenOffers markets={markets} market={null} offers={offers} onChanged={refreshAll} locked />
           </div>
 
-          <Activity data={activity.data} error={activity.error && !activity.data ? activity.error : null} network={config.network} />
+          <Balances rows={rows} network={config.network} priceNotes={priceNotes} loading={accountLoading} />
         </div>
       )}
     </main>

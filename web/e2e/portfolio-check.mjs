@@ -32,7 +32,7 @@ const browser = await launch();
   await page.waitForTimeout(6000);
   const over = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
   check("mobile 390px: no horizontal page overflow", over.sw <= over.cw + 1, `scrollWidth=${over.sw} clientWidth=${over.cw}`);
-  for (const id of ["portfolio-summary", "portfolio-balances", "portfolio-pool-positions", "portfolio-receipts", "portfolio-offers", "portfolio-activity"]) {
+  for (const id of ["portfolio-summary", "portfolio-balances", "portfolio-pool-positions", "portfolio-receipts", "portfolio-offers"]) {
     check(`mobile: ${id} rendered`, (await page.locator(`[data-testid="${id}"]`).count()) > 0);
   }
   await page.screenshot({ path: path.join(shots, "portfolio-maker-mobile.png"), fullPage: true });

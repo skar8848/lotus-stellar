@@ -290,6 +290,8 @@ export function PoolPositions({
   onChanged: () => void;
 }) {
   const actions = usePoolActions(address, network, onChanged);
+  // only the pools where this account has positions (or whose read failed); one empty note when there are none
+  const shown = (data ?? []).filter((d) => d.positions.length > 0 || !!d.error);
   return (
     <section className="min-w-0 space-y-4" data-testid="portfolio-pool-positions">
       <ActionStatus state={actions.status.state} network={network} onDismiss={actions.status.reset} />
@@ -297,13 +299,18 @@ export function PoolPositions({
         <Panel title="Lotus pool positions">
           <Empty>Loading...</Empty>
         </Panel>
-      ) : data.length === 0 ? (
+      ) : shown.length === 0 ? (
         <Panel title="Lotus pool positions">
-          <Empty>No Lotus pool is configured.</Empty>
+          <Empty>
+            No pool positions.{" "}
+            <Link href="/pools" className="text-primary underline-offset-2 hover:underline">
+              Open one on Pools
+            </Link>
+            .
+          </Empty>
         </Panel>
       ) : (
-        // a retired instance is only shown when this account still has positions there
-        data.filter((d) => d.inst.status !== "retired" || d.positions.length > 0 || !!d.error).map((d) => <PoolSection key={d.inst.id} entry={d} network={network} actions={actions} />)
+        shown.map((d) => <PoolSection key={d.inst.id} entry={d} network={network} actions={actions} />)
       )}
     </section>
   );

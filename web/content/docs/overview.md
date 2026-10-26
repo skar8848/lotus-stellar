@@ -7,7 +7,7 @@
 Lotus is two products that work together:
 
 1. **The Lotus pool** (`lotus_pool`, a Soroban contract): a range pool on a grid of price bins where the liquidity provider chooses a direction. A directional position only sells its inventory and only receives proceeds; nothing trades back. The USDC leg can optionally sit in a DeFindex vault that lends on Blend, so resting liquidity earns while it waits and is recalled just in time by the taker's own swap.
-2. **The receipt token** (`lotus_vault`, a Soroban contract, plus the classic asset `lUSDCb`): USDC deposited into a DeFindex vault comes back as a classic Stellar asset at 1:1. Classic assets can be quoted on the Stellar DEX (SDEX), and an SDEX offer never moves funds out of the account, so a limit order quoted in the receipt keeps earning Blend interest while it waits in the book.
+2. **The receipt tokens** (`lotus_vault`, a Soroban contract, plus the classic assets `lUSDCb` and `lUSDC`): USDC deposited into a DeFindex vault comes back as a classic Stellar asset at 1:1. Classic assets can be quoted on the Stellar DEX (SDEX), and an SDEX offer never moves funds out of the account, so a limit order quoted in `lUSDCb` keeps earning Blend interest while it waits in the book. `lUSDC` is the unlent version: an instant buffer for orders close to the price and for working capital.
 
 The market today is `LBOND / USDC`. `LBOND` is a **simulated** tokenized bond issued by the Lotus team with `AUTH_REQUIRED`, `AUTH_REVOCABLE` and clawback, to model a regulated real-world asset.
 
@@ -16,6 +16,8 @@ The market today is `LBOND / USDC`. `LBOND` is a **simulated** tokenized bond is
 Depth is idle capital. A resting order earns nothing, and an AMM position forces the holder into round trips they do not want: buy low, get sold back the asset higher, hold whatever the market leaves. The holders who own the inventory and the cash, issuers and treasuries, are the ones who could provide depth and have the least reason to.
 
 On Stellar, yield-bearing RWAs already exist (Ondo USDY, Etherfuse Stablebonds). The asset side of a bond pair earns while it sits; the quote side, USDC, does not. Lotus makes the USDC side earn too.
+
+That gives large providers a reason to bring depth to Stellar: the same capital keeps its yield while it quotes. And the yield is better risk-adjusted than a generic lending vault's, because the Lotus curator knows the order behind every dollar: near-price capital stays unlent (`lUSDC`), capital that can wait is lent on Blend (`lUSDCb`). See [Concepts](/docs/concepts.md#the-buffer-lusdc).
 
 ## One order, four places to wait
 

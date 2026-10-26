@@ -25,7 +25,7 @@ Limit and Range are the same order as `/pools` New position: same data, same str
 
 ## /pools: New position
 
-A four-step wizard:
+Three steps, then a review dialog:
 
 1. **Pair and side**: LBOND / USDC, **Sell LBOND** (Ask) or **Buy LBOND with USDC** (Bid).
 2. **Price range and deposit**: draggable Start / End handles on a chart of SDEX trades (1H to 1Y) next to a depth histogram of every live pool instance's bins plus the SDEX books, all on the same grid. Presets, min / max fields with one-bin steppers, weight shape (even, front, back) and the deposit.
@@ -53,7 +53,7 @@ Range orders are placed from `/pools`; the order panel links there.
 
 ## /portfolio
 
-Balances (available versus committed to offers), open offers, **receipts per vault** with **Redeem lUSDCb to USDC** (`/portfolio#receipts`), pool positions per instance, recent activity and a USDC-equivalent summary. Every address, asset, offer and transaction links to stellar.expert (testnet).
+In order: a USDC-equivalent summary; **pool positions** (only instances where you hold one: pair, side, range, fill bar, amount to claim, **Claim** when something is claimable, otherwise "Locked until filled"); **Lotus receipts** per vault (`/portfolio#receipts`) with **Yield earned** (paid by the keeper every ~15 minutes, plus what is accrued) and **Redeem** to USDC; **open orders** on the SDEX; then **balances** (available versus committed to offers). Every address, asset, offer and transaction links to stellar.expert (testnet).
 
 ## Common errors
 

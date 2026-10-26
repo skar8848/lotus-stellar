@@ -57,6 +57,12 @@ One order, chosen once:
 
 Known limitation: **just-in-time yield capture**. Distribution mints to current balances, so someone who deposits right before a distribution and redeems right after captures a share they did not earn. The planned fix is an exchange-rate (share-price) token.
 
+## The buffer: lUSDC
+
+`lUSDC` is the same receipt design on a second `lotus_vault` whose DeFindex vault is **never lent**: the USDC stays available, so it comes out instantly and redemptions never wait on Blend. It is made for orders close to the price, about to fill, and for the working capital a market maker keeps at hand. It earns nothing; `lUSDCb` is for orders that can wait.
+
+**Why two receipts.** A generic lending vault keeps blind buffers because it never knows when a depositor will withdraw. The Lotus curator does: every dollar sits behind a limit order with a known price, range and distance to the market. Capital behind orders about to fill stays unlent (`lUSDC`); capital behind orders that can wait is lent on Blend (`lUSDCb`). That is more yield for the same liquidity risk, and it lets large providers keep their yield while they post depth on Stellar. Today the split is enforced by the curator rule below; routing every order automatically by its distance to the price is the next step.
+
 ## The curator rule
 
 Yield is not offered for a **pool Bid** whose range starts within 10 bins (about 1 percent) of the reference price, because every trade would recall that USDC from the vault: little yield, more failure risk. In the app, the "Lotus pool + Blend yield" card is then disabled with "Too close to the price" and a **Change range** button.

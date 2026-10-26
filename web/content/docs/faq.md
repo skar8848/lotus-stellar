@@ -18,7 +18,7 @@ The transactions are real and on-chain. The source is not users: it is three acc
 
 ## 4. Where does the yield come from, and why did earlier testnet vaults show none?
 
-Blend supply interest, through a DeFindex vault we created and seeded ourselves. The existing PaltaLabs testnet vault earned nothing because DeFindex invests a deposit in proportion to the vault's existing allocation and skips an asset with nothing invested; only the vault's rebalance manager could seed it. We observed about 6.9 percent APR over 34 minutes, which follows Blend's testnet utilization (88.7 percent then; about 1.6 percent at 70 percent utilization). It is an observation, not a forecast.
+Blend supply interest, through a DeFindex vault we created and seeded ourselves. The existing PaltaLabs testnet vault earned nothing because DeFindex invests a deposit in proportion to the vault's existing allocation and skips an asset with nothing invested; only the vault's rebalance manager could seed it. We observed about 6.9 percent APR over 34 minutes, which follows Blend's testnet utilization (88.7 percent then; about 1.6 percent at 70 percent utilization). The app showed about 7.6 percent on 26 October. It is an observation, not a forecast.
 
 ## 5. Who runs the keeper, and what can it do wrong?
 
@@ -30,7 +30,7 @@ By redemption at par. `deposit` and `redeem` are permissionless and 1:1, so if t
 
 ## 7. What if Blend is illiquid?
 
-Redemption waits, and the receipt would trade at a discount until liquidity returns. If the vault position ever loses value, redemptions pay pro rata rather than at par, so nobody drains the backing ahead of others. Same risk as any lending receipt. Roadmap: a liquidity buffer outside the vault.
+Redemption waits, and the receipt would trade at a discount until liquidity returns. If the vault position ever loses value, redemptions pay pro rata rather than at par, so nobody drains the backing ahead of others. Same risk as any lending receipt. That is what `lUSDC` is for: its USDC is never lent, so orders close to the price and working capital can sit there and redeem instantly; routing near-price orders to it automatically is on the roadmap.
 
 ## 8. What can the LBOND issuer do to the pool?
 

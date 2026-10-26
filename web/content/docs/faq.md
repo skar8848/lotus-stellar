@@ -59,3 +59,8 @@ We are not lawyers and this is a testnet prototype. The contract holds the funds
 ## 14. Security and audit plan?
 
 Small contracts with written invariants and tests: supply never exceeds vault value, distributions are capped on-chain, pool accounting is checked for solvency after every operation of randomized sequences. No audit yet, no pause, no timelock, no upgrade path, and the testnet receipt issuers are not locked. Before mainnet: external audit with OpenZeppelin's audited Stellar library as the base for access control and pausing, lock the receipt issuer after `set_admin`, add a pause and a timelock, and a bug bounty.
+
+## 15. Why can't I exit an order early from the app, even for a fee?
+
+Orders and pool positions created from the app stay open until filled ("Early redemption · soon"). This is a UI rule, not a contract rule: `remove_position` works at any time and SDEX offers belong to your account, so the CLI, the SDK or the MCP server can always exit. An early exit against a fee (for example 10 percent) is easy to build: on the SDEX it is one classic transaction that cancels the offers and pays the fee atomically. We did not build it on purpose. On testnet there is no real curator whose allocation an early exit would disturb, and no real withdrawable liquidity to protect, so a fee would only simulate a constraint that does not exist yet, and anyone could skip it through the CLI. It belongs in the contract, where it can be enforced: early redemption with an exit fee is on the roadmap for the next contract version.
+

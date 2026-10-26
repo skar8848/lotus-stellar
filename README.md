@@ -206,6 +206,7 @@ Stated up front, because testnet is not mainnet.
 ## Roadmap
 
 - Exchange-rate receipt token: no keeper, no JIT capture.
+- Early redemption with an exit fee, enforced in the contract. Not built in the UI during the hackathon on purpose: with no real curator allocation or withdrawable liquidity to protect on testnet, a UI-only fee would simulate a constraint that does not exist and could be skipped from the CLI.
 - Quote-only exit for Bid LPs, pause and timelock, audit (OpenZeppelin's Stellar library as the base for access control).
 - Aggregator listing: Soroswap and LumAgg already route through the SDEX and Aquarius, so the receipt pair is routable; the work is listing and pricing.
 - More underlyings: EURC, then other quote assets with a lending market. A second yield strategy per pool (the pool design already takes one vault per instance).

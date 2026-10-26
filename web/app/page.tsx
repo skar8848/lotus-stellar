@@ -95,8 +95,8 @@ export default function Landing() {
             <p className="mt-5 max-w-md text-xl leading-snug text-white/85 sm:text-2xl">Liquidity that earns while it waits.</p>
             <p className="mt-5 max-w-md text-[15px] leading-relaxed text-white/55 sm:text-base">
               Resting liquidity sits idle, and market makers are rarely paid enough to provide it. Lotus is a new kind of pool
-              built for them: post directional range orders, let the idle side earn Blend yield, and keep trading on the Stellar DEX
-              while your portfolio works.
+              built for them: post directional range orders, let the idle side earn through DeFindex strategies designed for resting
+              liquidity (lending on Blend), and keep trading on the Stellar DEX while your portfolio works.
             </p>
             <div className="mt-10 flex w-fit flex-col items-center gap-3 sm:mt-14">
               <Link

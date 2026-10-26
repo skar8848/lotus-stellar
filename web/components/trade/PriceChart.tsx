@@ -7,8 +7,6 @@
 // market): the licensed Advanced Charts library is not used, and the embed widget only plots TradingView's own feeds.
 // Empty buckets are drawn as flat muted candles at the previous close with zero volume (see fillCandleGaps).
 // The chart is created once; polls push only the changed tail of each series (syncSeries), so bot updates do not jank.
-// mode="pro" (the range order views of /swap?mode=pro and /pools) adds chart/rangeLayer.ts: draggable min / max range
-// handles, the reference price line and the per-bin liquidity histogram (Lotus pool + SDEX) at the right of the pane.
 
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -56,7 +54,6 @@ import { ema, fillCandleGaps, type ChartCandle } from "@/lib/book";
 import type { Candle } from "@/lib/stellar";
 import { cn } from "@/lib/utils";
 import { DrawingLayer, loadDrawings, saveDrawings, type DrawTool, type Drawing, type Pt } from "./chart/drawings";
-import { POOL_COLOR, RangeLayer, SDEX_COLOR, panelWidth, type DepthBin, type RangeHandle } from "./chart/rangeLayer";
 import { fmtPrice, fmtVol, syncSeries, vwap, type SyncState } from "./chart/series";
 import { Clock, Divider, HL, Menu, MenuHeading, MenuItem, TbBtn } from "./chart/ui";
 
@@ -114,11 +111,6 @@ export function PriceChart({
   orderLines,
   headerLeft,
   className,
-  mode = "trade",
-  range,
-  onRangeChange,
-  refPrice,
-  liquidity,
 }: {
   /** raw Horizon aggregations (only buckets with trades), oldest first; null while loading */
   candles: Candle[] | null;
@@ -136,25 +128,13 @@ export function PriceChart({
   /** rendered at the start of the toolbar (the Chart / Depth switch) */
   headerLeft?: React.ReactNode;
   className?: string;
-  /** "pro": range order view (range handles, reference price, liquidity histogram on the right of the pane) */
-  mode?: "trade" | "pro";
-  /** pro: the order's range in QUOTE per BASE (null: no handles, e.g. the Swap tab) */
-  range?: { min: number; max: number } | null;
-  /** pro: a handle was dragged; the caller snaps / clamps (bin grid, direction rule) and passes the new range back */
-  onRangeChange?: (min: number, max: number) => void;
-  /** pro: reference price of the order (dashed line + axis tag) */
-  refPrice?: number;
-  /** pro: per-bin liquidity (Lotus pool + SDEX + the order being built), BASE-equivalent */
-  liquidity?: { bins: DepthBin[]; stepBps: number; unit?: string };
 }) {
-  const pro = mode === "pro";
   const tf = timeframes[tfIdx];
   const res = Math.round(tf.ms / 1000);
   const intraday = tf.ms < 86_400_000;
   const storeKey = marketId ?? marketLabel;
   const [style, setStyle] = useState<Style>("candles");
-  // pro: volume off by default (the pane is for the range and the liquidity)
-  const [ind, setInd] = useState<Ind>({ vol: !pro, ema9: true, ema21: false, vwap: false });
+  const [ind, setInd] = useState<Ind>({ vol: true, ema9: true, ema21: false, vwap: false });
   const [scale, setScale] = useState<ScaleMode>("normal");
   const [autoScale, setAutoScale] = useState(true);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -189,20 +169,6 @@ export function PriceChart({
   const drawingsRef = useRef<Drawing[]>([]);
   const keyRef = useRef(storeKey);
   const orderLinesRef = useRef<{ series: ISeriesApi<SeriesType>; lines: IPriceLine[] } | null>(null);
-  const paneRef = useRef<HTMLDivElement>(null);
-  const rangeLayerRef = useRef<RangeLayer | null>(null);
-  const proRef = useRef(pro);
-  const rangeRef = useRef(range ?? null);
-  const onRangeRef = useRef(onRangeChange);
-  const gapRef = useRef(0);
-  const [tip, setTip] = useState<{ x: number; y: number; d: DepthBin } | null>(null);
-  const [dragging, setDragging] = useState<RangeHandle | null>(null);
-  useEffect(() => {
-    proRef.current = pro;
-    rangeRef.current = range ?? null;
-    onRangeRef.current = onRangeChange;
-    gapRef.current = ((refPrice || range?.min || 1) * (liquidity?.stepBps ?? 10)) / 10_000;
-  });
 
   useEffect(() => {
     const id = setInterval(() => setNowMin(Math.floor(Date.now() / 60_000) * 60_000), 5000);
@@ -265,9 +231,6 @@ export function PriceChart({
     const layer = new DrawingLayer();
     layer.setContext({ fmt: fmtPrice, up: HL.up, down: HL.down });
     layerRef.current = layer;
-    const rangeLayer = new RangeLayer();
-    rangeLayer.set({ fmt: fmtPrice });
-    rangeLayerRef.current = rangeLayer;
 
     /** pane pixel (x, y) -> { UTC time of the bar, price }, snapped to O/H/L/C with the magnet */
     const pointAt = (x: number, y: number): Pt | null => {
@@ -296,13 +259,6 @@ export function PriceChart({
     const onMove = (p: MouseEventParams) => {
       const pend = pendingPt.current;
       if (pend && p.point) layer.setPreview(toolRef.current, pend, pointAt(p.point.x, p.point.y));
-      if (proRef.current) {
-        const pt = p.point;
-        const d = pt && pt.x >= 0 && pt.y >= 0 ? rangeLayer.binAt(pt.x, pt.y) : null;
-        setTip(d && pt ? { x: pt.x, y: pt.y, d } : null);
-        if (toolRef.current === "cursor") rangeLayer.setActive(pt ? rangeLayer.handleAt(pt.y) : null);
-        exposeHandles();
-      }
       if (!p.point || p.time == null || p.point.x < 0 || p.point.y < 0) {
         setHoverIdx(null);
         return;
@@ -349,75 +305,6 @@ export function PriceChart({
       else commit([...drawingsRef.current, { id, kind: t, a, b: pt }]);
       setTool("cursor");
     };
-    /** pane y of each handle as data attributes (automation: tests drag them without reading the canvas) */
-    const exposeHandles = () => {
-      const box = paneRef.current;
-      if (!box) return;
-      box.dataset.handleMinY = String(Math.round(rangeLayer.handleY("min") ?? -1));
-      box.dataset.handleMaxY = String(Math.round(rangeLayer.handleY("max") ?? -1));
-    };
-
-    // range handles (pro): a press on a handle drags it instead of panning the chart. Listeners sit on the pane's
-    // parent in the capture phase, so neither the chart nor the drawing tools see the press.
-    const pane = paneRef.current;
-    let drag: RangeHandle | null = null;
-    const grab = (e: PointerEvent) => {
-      if (!proRef.current || !onRangeRef.current || !rangeRef.current || toolRef.current !== "cursor" || e.button !== 0 || !pane) return;
-      const r = el.getBoundingClientRect();
-      const x = e.clientX - r.left;
-      const y = e.clientY - r.top;
-      if (x < 0 || y < 0 || x > chart.paneSize().width || y > chart.paneSize().height) return;
-      const h = rangeLayer.handleAt(y);
-      if (!h) return;
-      drag = h;
-      e.stopPropagation();
-      e.preventDefault();
-      pane.setPointerCapture?.(e.pointerId);
-      rangeLayer.setActive(h);
-      setDragging(h);
-      setTip(null);
-    };
-    const swallow = (e: Event) => {
-      if (drag) e.stopPropagation();
-    };
-    const moveDrag = (e: PointerEvent) => {
-      if (!drag) return;
-      e.stopPropagation();
-      const main = mainRef.current;
-      const cur = rangeRef.current;
-      const cb = onRangeRef.current;
-      if (!main || !cur || !cb) return;
-      const r = el.getBoundingClientRect();
-      const y = Math.max(0, Math.min(chart.paneSize().height, e.clientY - r.top));
-      const p = main.coordinateToPrice(y);
-      if (p === null || !(p > 0)) return;
-      const gap = gapRef.current;
-      if (drag === "min") cb(Math.min(p, cur.max - gap), cur.max);
-      else cb(cur.min, Math.max(p, cur.min + gap));
-    };
-    const endDrag = (e: PointerEvent) => {
-      if (!drag) return;
-      e.stopPropagation();
-      drag = null;
-      pane?.releasePointerCapture?.(e.pointerId);
-      rangeLayer.setActive(null);
-      setDragging(null);
-      // a handle dragged off a manually scaled axis: back to auto scale, which keeps both handles in view
-      if (chart.priceScale("right").options().autoScale === false) {
-        chart.priceScale("right").applyOptions({ autoScale: true });
-        setAutoScale(true);
-      }
-      exposeHandles();
-    };
-    if (pane) {
-      pane.addEventListener("pointerdown", grab, true);
-      pane.addEventListener("mousedown", swallow, true);
-      pane.addEventListener("touchstart", swallow, true);
-      pane.addEventListener("pointermove", moveDrag, true);
-      pane.addEventListener("pointerup", endDrag, true);
-      pane.addEventListener("pointercancel", endDrag, true);
-    }
-
     chart.subscribeCrosshairMove(onMove);
     el.addEventListener("pointerdown", onDown);
     el.addEventListener("pointerup", onUp);
@@ -429,14 +316,6 @@ export function PriceChart({
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (pane) {
-        pane.removeEventListener("pointerdown", grab, true);
-        pane.removeEventListener("mousedown", swallow, true);
-        pane.removeEventListener("touchstart", swallow, true);
-        pane.removeEventListener("pointermove", moveDrag, true);
-        pane.removeEventListener("pointerup", endDrag, true);
-        pane.removeEventListener("pointercancel", endDrag, true);
-      }
       chart.unsubscribeCrosshairMove(onMove);
       el.removeEventListener("pointerdown", onDown);
       el.removeEventListener("pointerup", onUp);
@@ -448,7 +327,6 @@ export function PriceChart({
       ema21Ref.current = null;
       vwapRef.current = null;
       layerRef.current = null;
-      rangeLayerRef.current = null;
       orderLinesRef.current = null;
     };
   }, []);
@@ -457,11 +335,9 @@ export function PriceChart({
   useEffect(() => {
     const chart = chartRef.current;
     const layer = layerRef.current;
-    const rangeLayer = rangeLayerRef.current;
-    if (!chart || !layer || !rangeLayer) return;
+    if (!chart || !layer) return;
     if (mainRef.current) {
       mainRef.current.detachPrimitive(layer);
-      if (pro) mainRef.current.detachPrimitive(rangeLayer);
       chart.removeSeries(mainRef.current);
     }
     const common = { priceFormat: { type: "price" as const, precision: 4, minMove: 0.0001 }, priceLineStyle: LineStyle.Dashed, priceLineWidth: 1 as const };
@@ -473,23 +349,10 @@ export function PriceChart({
           : style === "line"
             ? chart.addSeries(LineSeries, { ...common, color: HL.accent, lineWidth: 2 })
             : chart.addSeries(AreaSeries, { ...common, lineColor: HL.accent, topColor: "rgba(80,210,193,0.25)", bottomColor: "rgba(80,210,193,0.02)", lineWidth: 2 });
-    if (pro) main.attachPrimitive(rangeLayer);
     main.attachPrimitive(layer);
     mainRef.current = main;
     sync.current.main = { prev: null };
-  }, [style, pro]);
-
-  // pro overlay data
-  const rMin = range?.min ?? null;
-  const rMax = range?.max ?? null;
-  useEffect(() => {
-    rangeLayerRef.current?.set({
-      range: rMin !== null && rMax !== null ? { min: rMin, max: rMax } : null,
-      ref: refPrice ?? 0,
-      bins: liquidity?.bins ?? [],
-      stepBps: liquidity?.stepBps ?? 10,
-    });
-  }, [rMin, rMax, refPrice, liquidity?.bins, liquidity?.stepBps]);
+  }, [style]);
 
   // data: only the changed tail is pushed on a poll
   useEffect(() => {
@@ -527,9 +390,9 @@ export function PriceChart({
       const secs = pendingSecs.current;
       pendingSecs.current = null;
       if (secs) showLast(chart, bars, secs, tzOff);
-      else defaultView(chart, bars.length, pro);
+      else defaultView(chart, bars.length);
     }
-  }, [bars, ema9, ema21, vwapVals, style, ind, resetKey, res, tzOff, pro]);
+  }, [bars, ema9, ema21, vwapVals, style, ind, resetKey, res, tzOff]);
 
   // drawings of this market
   useEffect(() => {
@@ -607,7 +470,7 @@ export function PriceChart({
   }
   function resetView() {
     setAutoScale(true);
-    if (bars.length && chartRef.current) defaultView(chartRef.current, bars.length, pro);
+    if (bars.length && chartRef.current) defaultView(chartRef.current, bars.length);
   }
   function pickRange(r: (typeof RANGES)[number]) {
     const want = timeframes.findIndex((x) => x.label === r.tf);
@@ -813,14 +676,7 @@ export function PriceChart({
         </div>
 
         {/* chart + legend */}
-        <div
-          ref={paneRef}
-          className={cn("relative min-w-0 flex-1", tool !== "cursor" && "cursor-crosshair", dragging && "cursor-ns-resize select-none")}
-          data-testid="chart-pane"
-          data-range-min={pro && range ? range.min : undefined}
-          data-range-max={pro && range ? range.max : undefined}
-          data-dragging={dragging ?? undefined}
-        >
+        <div className={cn("relative min-w-0 flex-1", tool !== "cursor" && "cursor-crosshair")} data-testid="chart-pane">
           <div ref={boxRef} className="absolute inset-0" />
           <div className="num pointer-events-none absolute left-2.5 top-1.5 z-10 space-y-0.5 text-[11px] leading-4" data-testid="chart-legend">
             <div className="flex flex-wrap items-center gap-x-2">
@@ -864,9 +720,6 @@ export function PriceChart({
             {bar && ind.ema21 && ema21[i] != null ? <IndLine label="EMA 21 close" color={EMA21} value={ema21[i]} /> : null}
             {bar && ind.vwap && vwapVals[i] != null ? <IndLine label="VWAP" color={VWAP} value={vwapVals[i] as number} /> : null}
           </div>
-          {pro ? (
-            <ProTooltip tip={dragging ? null : tip} unit={liquidity?.unit ?? baseCode} />
-          ) : null}
           {tool !== "cursor" ? (
             <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded px-2 py-0.5 text-[11px]" style={{ background: HL.menu, color: HL.bright }}>
               {tool === "hline" || tool === "hray" ? "Click to place" : "Click the first point, then the second"} · Esc to cancel
@@ -911,39 +764,6 @@ export function PriceChart({
   );
 }
 
-/** Pro: hover tooltip of a histogram bin (price, pool size, SDEX size, your size). */
-function ProTooltip({ tip, unit }: { tip: { x: number; y: number; d: DepthBin } | null; unit: string }) {
-  if (!tip) return null;
-  const n = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return (
-    <div
-      className="num pointer-events-none absolute z-20 -translate-x-full -translate-y-1/2 whitespace-nowrap rounded border px-2 py-1 text-[10px] leading-4 shadow"
-      style={{ left: Math.max(150, tip.x - 10), top: tip.y, background: HL.menu, borderColor: HL.border, color: HL.text }}
-      data-testid="depth-tooltip"
-    >
-      <div className="font-medium" style={{ color: HL.bright }}>
-        {fmtPrice(tip.d.price)}
-      </div>
-      <div>
-        <span style={{ color: POOL_COLOR }}>pool</span> {n(tip.d.pool)} · <span style={{ color: SDEX_COLOR }}>SDEX</span> {n(tip.d.sdex)}
-        {tip.d.mine ? <> · yours {n(tip.d.mine)}</> : null} {unit}
-      </div>
-    </div>
-  );
-}
-
-/** Pro: legend of the liquidity histogram, as a small row rendered BELOW the chart by the caller. */
-export function LiquidityLegend({ mine, className }: { mine?: boolean; className?: string }) {
-  const sw = (bg: string, border?: boolean) => <span className={cn("inline-block size-2.5 rounded-sm", border && "border border-white")} style={{ background: bg }} />;
-  return (
-    <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-mutedfg", className)} data-testid="range-chart-legend">
-      <span className="flex items-center gap-1.5">{sw(POOL_COLOR)} Lotus pool liquidity</span>
-      <span className="flex items-center gap-1.5">{sw(SDEX_COLOR)} SDEX liquidity</span>
-      {mine ? <span className="flex items-center gap-1.5">{sw(POOL_COLOR, true)} your order</span> : null}
-    </div>
-  );
-}
-
 function IndLine({ label, color, value }: { label: string; color: string; value: number }) {
   return (
     <div style={{ color: HL.text }}>
@@ -962,16 +782,10 @@ function FibIcon({ className }: { className?: string }) {
   );
 }
 
-/**
- * The last 60 bars (or the whole history if shorter, at least 20 slots wide), 3 bars of margin right; in pro mode the
- * right margin also leaves the liquidity panel and the handle grips free, so the candles fill the left part.
- */
-function defaultView(chart: IChartApi, n: number, pro = false) {
+/** The last 60 bars (or the whole history if shorter, at least 20 slots wide), 3 bars of margin right. */
+function defaultView(chart: IChartApi, n: number) {
   const span = Math.max(20, Math.min(60, n));
-  const w = chart.paneSize().width;
-  const frac = pro && w > 0 ? Math.min(0.5, (panelWidth(w) + 16) / w) : 0;
-  const right = 3 + ((span + 3) * frac) / (1 - frac);
-  chart.timeScale().setVisibleLogicalRange({ from: n - span, to: n - 1 + right });
+  chart.timeScale().setVisibleLogicalRange({ from: n - span, to: n - 1 + 3 });
 }
 /** Last `secs` of data (only what exists: a range longer than the history shows the whole history). */
 function showLast(chart: IChartApi, bars: ChartCandle[], secs: number, tzOff: number) {

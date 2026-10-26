@@ -7,13 +7,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowDownUp, ChevronDown, Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ArrowDown, ArrowDownUp, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TokenIcon } from "@/components/common";
-import { LiquidityLegend, PriceChart } from "@/components/trade/PriceChart";
-import { useProCandles } from "@/components/trade/chart/useProCandles";
 import { ReviewDialog } from "@/components/pools/ReviewDialog";
 import { StrategyCards } from "@/components/pools/StrategyCards";
 import type { LiveApr } from "@/components/pools/useBlendApr";
@@ -25,6 +22,8 @@ import { fmt, type AssetRef } from "@/lib/stellar";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet";
 import { NumberInput, TokenButton, fmtBalance, fmtNum } from "./parts";
+import { ProChartCard, type RangeEnd } from "./ProRangeChart";
+import { useProCandles } from "./useProCandles";
 import type { RangeOrder } from "./useRangeOrder";
 
 // the lite / pro "+5% +10% +25% +50%" presets, scaled to the pool grid (10 bps bins, at most 64 bins a position)
@@ -422,56 +421,34 @@ function OrderNote({ o }: { o: RangeOrder }) {
   return null;
 }
 
-/** LimitScreen ChartPanel on the /trade chart in pro mode (candles + range handles + pool / SDEX liquidity). */
+/** LimitScreen ChartPanel: the lotus-main /pro chart card (candles + Start / End handles + pool / SDEX liquidity). */
 export function ChartPanel({ o, showRange }: { o: RangeOrder; showRange: boolean }) {
   const config = useConfig();
   const c = useProCandles({ horizon: config.horizon, base: o.base, quote: o.quote, receipt: o.receipt, preferReceipt: o.chosen?.id === "sdex-yield", enabled: o.ready });
+  const range = showRange && o.start > 0 && o.end > 0 ? { start: o.start, end: o.end } : null;
+  // a handle never crosses the other one (Ask: start under end, Bid: start above end); snapping is useRangeOrder's
+  const g = o.step / 10_000;
+  const ask = o.side === "Ask";
+  const drag = (which: RangeEnd, p: number) =>
+    which === "start" ? o.setLoHi(ask ? Math.min(p, o.end * (1 - g)) : Math.max(p, o.end * (1 + g)), o.end) : o.setLoHi(o.start, ask ? Math.max(p, o.start * (1 + g)) : Math.min(p, o.start * (1 - g)));
   return (
-    <div className="card flex flex-col p-5" data-testid="pro-chart">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-          <span className="flex -space-x-1.5">
-            <TokenIcon code={o.base.code} size={20} />
-            <TokenIcon code={o.quote.code} size={20} />
-          </span>
-          {o.base.code} <span className="text-mutedfg">/ {o.quote.code}</span>
-          {showRange && o.inRangeShare != null && (
-            <Badge variant="outline" className="text-[10px] text-primary">
-              {o.inRangeShare}% liquidity in range
-            </Badge>
-          )}
-        </div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums">
-          {o.refPrice > 0 ? `${fmtNum(o.refPrice)} ${o.quote.code}` : o.live ? "-" : <Loader2 className="size-5 animate-spin text-mutedfg" />}
-        </div>
-      </div>
-      <div className="mt-4 flex-1 overflow-hidden rounded-lg border border-line">
-        <PriceChart
-          className="h-[480px]"
-          mode="pro"
-          candles={c.candles}
-          timeframes={c.timeframes}
-          tfIdx={c.tfIdx}
-          onTf={c.setTfIdx}
-          resetKey={`${c.marketId}:${c.timeframes[c.tfIdx].label}`}
-          marketLabel={c.marketLabel}
-          marketId={c.marketId}
-          baseCode={o.base.code}
-          range={showRange && o.lo > 0 && o.hi > 0 ? { min: o.lo, max: o.hi } : null}
-          onRangeChange={showRange ? o.setLoHi : undefined}
-          refPrice={o.refPrice}
-          liquidity={{ bins: o.depthBins, stepBps: o.step, unit: o.base.code }}
-        />
-      </div>
-      <LiquidityLegend mine={showRange && o.amountTyped} className="mt-2" />
-      <p className="mt-1.5 text-[11px] text-mutedfg">
-        {showRange ? (
-          <>
-            Drag the <span className="text-primary">Min</span> / <span className="text-primary">Max</span> handles to set your range: inventory fills bin by bin as the price moves through it.{" "}
-          </>
-        ) : null}
-        {`The right panel shows live depth per pool bin: Lotus pool and SDEX liquidity, on the same price axis as the ${c.marketLabel} candles.`}
-      </p>
-    </div>
+    <ProChartCard
+      base={o.base.code}
+      quote={o.quote.code}
+      price={o.refPrice}
+      loading={!o.live}
+      inRangeShare={o.inRangeShare}
+      tfIdx={c.tfIdx}
+      onTf={c.setTfIdx}
+      marketLabel={c.marketLabel}
+      candles={c.candles}
+      resMs={c.tf.res}
+      range={range}
+      bins={range && o.plan.ok ? o.plan.bins.map((b) => Number(b.price) / 1e7) : []}
+      depth={o.depthBins}
+      refPrice={o.refPrice}
+      onRangeChange={range ? drag : undefined}
+      onRecenter={range ? o.recenter : undefined}
+    />
   );
 }

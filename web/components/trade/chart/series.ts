@@ -66,13 +66,3 @@ function samePoint(a: Point, b: Point): boolean {
   for (const k in a) if (!(k in b)) return false;
   return true;
 }
-
-/** Horizon /trade_aggregations resolutions of the chart (the /trade interval list). */
-export const CHART_TIMEFRAMES = [
-  { label: "1m", ms: 60_000 },
-  { label: "5m", ms: 300_000 },
-  { label: "15m", ms: 900_000 },
-  { label: "1h", ms: 3_600_000 },
-  { label: "1D", ms: 86_400_000 },
-  { label: "1W", ms: 604_800_000 },
-] as const;

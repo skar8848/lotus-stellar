@@ -28,7 +28,7 @@ Limit and Range are the same order as `/pools` New position: same data, same str
 A four-step wizard:
 
 1. **Pair and side**: LBOND / USDC, **Sell LBOND** (Ask) or **Buy LBOND with USDC** (Bid).
-2. **Price range and deposit**: draggable min / max handles on a chart of SDEX trades flowing into a depth histogram of every live pool instance's bins plus the SDEX books, all on the same grid. Presets, min / max fields with one-bin steppers, weight shape (even, front, back) and the deposit.
+2. **Price range and deposit**: draggable Start / End handles on a chart of SDEX trades (1H to 1Y) next to a depth histogram of every live pool instance's bins plus the SDEX books, all on the same grid. Presets, min / max fields with one-bin steppers, weight shape (even, front, back) and the deposit.
 3. **Choose your strategy**: four cards (Lotus pool, Lotus pool + Blend yield, Stellar DEX, Stellar DEX + Blend yield), each with the expected yield, the number of signatures and, when unavailable, why (direction rule, curator rule, no instance, more than 50 SDEX levels).
 4. **Review**: deposit, range, average price, fee or XLM reserve, trustlines added, crossing warning, then **Sign**. The two-transaction case (receipt buy) is handled here, including "Post the offers again" if the second step fails.
 

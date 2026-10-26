@@ -15,7 +15,7 @@ import { getPoolClient } from "@/lib/pool";
 import { MAX_BIN, MIN_BIN, binForPrice, planPosition, priceAt, type Side } from "@/lib/poolGrid";
 import { assetReady, fetchOrderBook, type AssetRef } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import type { DepthBin } from "@/components/trade/chart/rangeLayer";
+import type { DepthBin } from "./depthLayer";
 import { STRATEGIES, directionalPools, useOrderDestinations, type StrategyId } from "@/components/pools/useOrder";
 
 export const snapPrice = (p: number, step: number) => Number(priceAt(binForPrice(p, step), step)) / 1e7;
@@ -189,6 +189,12 @@ export function useRangeOrder({ sideFromSell, kind, enabled }: { sideFromSell: S
     setEndMode("pct");
     setChoice(null);
   };
+  /** chart "recenter": the range follows the reference price again (same width in %, strategy kept) */
+  const recenter = () => {
+    setStart(null);
+    setEndAbs(null);
+    setEndMode("pct");
+  };
   const refresh = () => {
     depthQ.refresh();
     booksQ.refresh();
@@ -237,6 +243,7 @@ export function useRangeOrder({ sideFromSell, kind, enabled }: { sideFromSell: S
     inRangeShare,
     reset,
     resetPrices,
+    recenter,
     refresh,
   };
 }

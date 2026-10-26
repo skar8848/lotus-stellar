@@ -28,9 +28,9 @@ import { MAX_BIN, MAX_POSITION_BINS, MIN_BIN, binForPrice, planPosition, priceAt
 import { assetReady, fetchOrderBook, fmt, type AssetRef } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
-import { LiquidityLegend, PriceChart } from "@/components/trade/PriceChart";
-import type { DepthBin } from "@/components/trade/chart/rangeLayer";
-import { useProCandles } from "@/components/trade/chart/useProCandles";
+import type { DepthBin } from "@/components/swap/depthLayer";
+import { ProChartCard, type RangeEnd } from "@/components/swap/ProRangeChart";
+import { useProCandles } from "@/components/swap/useProCandles";
 import { ReviewDialog } from "./ReviewDialog";
 import { StrategyCards } from "./StrategyCards";
 import type { LiveApr } from "./useBlendApr";
@@ -244,6 +244,13 @@ export function NewPosition({
     setClampNote(clamped ? (side === "Ask" ? "A sell range starts at or above the current price" : "A buy range ends at or below the current price") : null);
     setRange({ lo: Number(priceAt(a, step)) / 1e7, hi: Number(priceAt(b, step)) / 1e7 });
   };
+  /** chart handles: Start / End -> lo / hi by side; a handle never crosses the other one */
+  const dragHandle = (which: RangeEnd, p: number) => {
+    const g = step / 10_000;
+    const movesLo = (side === "Ask") === (which === "start");
+    if (movesLo) setLoHi(Math.min(p, eff.hi * (1 - g)), eff.hi);
+    else setLoHi(eff.lo, Math.max(p, eff.lo * (1 + g)));
+  };
   const stepBin = (which: "lo" | "hi", dir: 1 | -1) => {
     const v = which === "lo" ? eff.lo : eff.hi;
     const next = Number(priceAt(Math.max(MIN_BIN, Math.min(MAX_BIN, binForPrice(v, step) + dir)), step)) / 1e7;
@@ -451,37 +458,34 @@ export function NewPosition({
                       ({refLabel})
                     </span>
                   </span>
-                  <span className="flex items-center gap-1.5">
-                    {inRangeShare !== null ? (
-                      <Badge variant="outline" className="text-[10px] text-primary">
-                        {inRangeShare}% of visible liquidity in range
-                      </Badge>
-                    ) : null}
-                    <Badge variant="outline" className="gap-1 text-[10px] text-green">
-                      <span className="size-1.5 rounded-full bg-green" /> live depth
-                    </Badge>
-                  </span>
+                  <Badge variant="outline" className="gap-1 text-[10px] text-green">
+                    <span className="size-1.5 rounded-full bg-green" /> live depth
+                  </Badge>
                 </div>
 
-                <div className="overflow-hidden rounded-lg border border-line">
-                  <PriceChart
-                    className="h-[460px]"
-                    mode="pro"
-                    candles={candles.candles}
-                    timeframes={candles.timeframes}
-                    tfIdx={candles.tfIdx}
-                    onTf={candles.setTfIdx}
-                    resetKey={`${candles.marketId}:${candles.timeframes[candles.tfIdx].label}`}
-                    marketLabel={candles.marketLabel}
-                    marketId={candles.marketId}
-                    baseCode={base.code}
-                    range={{ min: eff.lo, max: eff.hi }}
-                    onRangeChange={setLoHi}
-                    refPrice={refPrice}
-                    liquidity={{ bins: depthBins, stepBps: step, unit: base.code }}
-                  />
-                </div>
-                <LiquidityLegend mine={amountTyped && plan.ok} className="-mt-2" />
+                <ProChartCard
+                  bare
+                  base={base.code}
+                  quote={quote.code}
+                  price={refPrice}
+                  loading={!depthQ.data && !booksQ.data}
+                  inRangeShare={inRangeShare}
+                  tfIdx={candles.tfIdx}
+                  onTf={candles.setTfIdx}
+                  marketLabel={candles.marketLabel}
+                  candles={candles.candles}
+                  resMs={candles.tf.res}
+                  range={{ start: side === "Ask" ? eff.lo : eff.hi, end: side === "Ask" ? eff.hi : eff.lo }}
+                  bins={plan.ok ? plan.bins.map((b) => Number(b.price) / 1e7) : []}
+                  depth={depthBins}
+                  refPrice={refPrice}
+                  onRangeChange={dragHandle}
+                  onRecenter={() => {
+                    setRange(null);
+                    setClampNote(null);
+                  }}
+                  caption={`The right panel shows live liquidity per pool bin: every Lotus pool instance plus the SDEX LBOND/USDC and LBOND/receipt books, on the same price axis as the ${candles.marketLabel} candles.`}
+                />
 
                 <div>
                   <div className="mb-2 text-sm font-medium">Range presets</div>

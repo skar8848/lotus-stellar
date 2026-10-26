@@ -74,16 +74,33 @@ export function horizonError(e: unknown): string {
   return scrub(e instanceof Error ? e.message : String(e));
 }
 
-/** Build, sign (server key) and submit one classic transaction. */
+// one queue per source key: two claims in the same ledger would otherwise load the same sequence number
+const sourceQueues = new Map<string, Promise<unknown>>();
+
+/** Build, sign (server key) and submit one classic transaction; serialised per source, one retry on tx_bad_seq. */
 export async function sendClassic(horizonUrl: string, passphrase: string, kp: Keypair, ops: xdr.Operation[]): Promise<string> {
-  const server = new Horizon.Server(horizonUrl);
-  const acc = await server.loadAccount(kp.publicKey());
-  const b = new TransactionBuilder(acc, { fee: "1000", networkPassphrase: passphrase });
-  for (const op of ops) b.addOperation(op);
-  const tx = b.setTimeout(60).build();
-  tx.sign(kp);
-  const r = await server.submitTransaction(tx);
-  return r.hash;
+  const key = kp.publicKey();
+  const run = async (): Promise<string> => {
+    const server = new Horizon.Server(horizonUrl);
+    for (let attempt = 0; ; attempt++) {
+      const acc = await server.loadAccount(key);
+      const b = new TransactionBuilder(acc, { fee: "1000", networkPassphrase: passphrase });
+      for (const op of ops) b.addOperation(op);
+      const tx = b.setTimeout(60).build();
+      tx.sign(kp);
+      try {
+        const r = await server.submitTransaction(tx);
+        return r.hash;
+      } catch (e) {
+        if (attempt === 0 && horizonError(e).includes("tx_bad_seq")) continue;
+        throw e;
+      }
+    }
+  };
+  const prev = sourceQueues.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(run);
+  sourceQueues.set(key, next);
+  return next;
 }
 
 export function fundingOps(p: { destination: string; asset: { code: string; issuer: string }; amount: string; authorize: boolean }): xdr.Operation[] {

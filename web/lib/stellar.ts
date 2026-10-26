@@ -686,7 +686,9 @@ export async function sendSorobanSigned(
   }
 
   p.onStage?.("confirming");
-  for (let i = 0; i < 60; i++) {
+  // poll past the transaction's 180 s time bound (prepareInvoke), so a slow inclusion is never reported as
+  // "nothing moved": after the bound the status is final either way
+  for (let i = 0; i < 160; i++) {
     await new Promise((r) => setTimeout(r, 1200));
     const got = await server.getTransaction(sent.hash);
     if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) {

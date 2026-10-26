@@ -191,6 +191,11 @@ Stated up front, because testnet is not mainnet.
 - **No pause, upgrade path or audit.** The pool admin can only change `max_bins_per_swap`. The receipt issuers are not locked on testnet (on mainnet the issuer would be locked after `set_admin`, so the contract is the only minter).
 - **Older instance.** The `defindex` pool instance runs an earlier build of the same source (stages A to C) and holds vault shares, so it was not redeployed; `idle` was redeployed from the final build on 26 October 2026 (the earlier one is kept under `retired_pools`).
 - **Two-way bid side** was tested in unit tests, not live in the UI.
+- **Receipt issuer trust (testnet).** The `lUSDCb` issuer key is not locked, so on testnet the team could print receipts classically and redeem them against the vault: a trust assumption on us until the issuer is locked after `set_admin` (mainnet requirement).
+- **Vault edge cases.** `redeem` burns the full amount and pays what DeFindex returns (no revert if the vault pays a stroop less), and `deposit` mints 1:1 even if the vault were under-backed after a Blend loss (a new depositor would then recapitalise earlier holders). Neither has occurred on testnet; both are fixes for the next contract version (revert on shortfall, pro-rata mint when under-backed).
+- **Pool details.** Sealed bin generations are not TTL-bumped by `claim`/`remove_position`, so a position in a bin left untouched for about 30 days needs a state restore before it can claim. The pool trusts DeFindex to deposit the full amount (true for a single-asset vault). The admin can lower `max_bins_per_swap`, which degrades swap depth but cannot move funds.
+- **Faucet.** Its limits (one claim per address, per-IP rate) are soft on a serverless host; it only hands out testnet tokens.
+- **Locked orders are a UI rule.** Orders created with a yield strategy cannot be cancelled from the app until filled, but SDEX offers belong to the user's account and another wallet could still cancel them.
 - Yield accrues on the USDC leg only. Mainnet cost and rates are unmeasured.
 
 ## Roadmap

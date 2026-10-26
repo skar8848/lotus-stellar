@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
 
-// /earn became the "Vault & receipt (lUSDC)" tab of /pools. Keep old links (and ?strategy=) working.
+// /earn (the nav "Earn" entry) lands on /pools, where the yield strategies are chosen as the last step of a new
+// position. Old vault links (/earn?strategy=...) pointed at the receipt deposit / redeem page, which is gone: held
+// receipts are redeemed from /portfolio.
 export default async function EarnRedirect({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;
-  const q = new URLSearchParams({ tab: "vault" });
-  const strategy = Array.isArray(sp.strategy) ? sp.strategy[0] : sp.strategy;
-  if (strategy) q.set("strategy", strategy);
-  redirect(`/pools?${q.toString()}`);
+  if (sp.strategy) redirect("/portfolio#receipts");
+  redirect("/pools");
 }

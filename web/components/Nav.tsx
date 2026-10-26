@@ -8,8 +8,9 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/trade", label: "Trade" },
-  { href: "/earn", label: "Earn" },
+  { href: "/pools", label: "Pools" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/faucet", label: "Faucet" },
 ];
 
 export function NetworkBadge({ className }: { className?: string }) {
@@ -50,8 +51,8 @@ export function Nav() {
           <ConnectButton />
         </div>
       </nav>
-      {/* phone: the three destinations as a second row */}
-      <div className="mx-auto grid max-w-7xl grid-cols-3 gap-1 px-4 pb-2 md:hidden">
+      {/* phone: the destinations as a second row */}
+      <div className="mx-auto grid max-w-7xl grid-cols-4 gap-1 px-4 pb-2 md:hidden">
         {LINKS.map((l) => (
           <Link
             key={l.href}

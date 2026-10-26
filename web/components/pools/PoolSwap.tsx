@@ -48,7 +48,23 @@ export function PoolSwap({
   const quote = usePolling(quoteFn, 8000, valid);
   const q = quote.data;
   const minOut = q ? (q.amountOut * BigInt(10_000 - Math.round(slip * 100))) / 10_000n : null;
-  const price = q && q.amountOut > 0n && amountIn ? (dir === "buy" ? Number(amountIn) / Number(q.amountOut) : Number(q.amountOut) / Number(amountIn)) : null;
+  // the contract's avg_price (fee included) is computed on what is actually spent: on a partial fill only part of the
+  // input is pulled, so dividing the full input by the output would overstate the price (fallback: full input)
+  const price =
+    q && q.amountOut > 0n && amountIn
+      ? q.avgPrice > 0n
+        ? Number(q.avgPrice) / 1e7
+        : dir === "buy"
+          ? Number(amountIn) / Number(q.amountOut)
+          : Number(q.amountOut) / Number(amountIn)
+      : null;
+  // what the swap really takes from you on a partial fill (buy: quote spent = out x avg price; sell: base spent = out / avg)
+  const spent =
+    q && q.partial && q.avgPrice > 0n && q.amountOut > 0n
+      ? dir === "buy"
+        ? (q.amountOut * q.avgPrice + 9_999_999n) / 10_000_000n
+        : (q.amountOut * 10_000_000n + q.avgPrice - 1n) / q.avgPrice
+      : null;
   const avail = payAccess.available;
   const insufficient = valid && avail !== null && Number(fromStroops(amountIn as bigint)) > avail + 1e-9;
 
@@ -114,6 +130,7 @@ export function PoolSwap({
       />
       <div className="rounded-xl border border-border px-3 py-2.5 text-xs" data-testid="pool-swap-details">
         <Line k="Effective price" v={price ? `${fmt(price, 4, 4)} ${inst.quote.code}/${inst.base.code}` : "-"} />
+        {spent !== null ? <Line k="Input actually used (about)" v={`${fmt(fromStroops(spent), 4)} ${pay.code}`} /> : null}
         <Line k="Bins crossed" v={q ? String(q.binsCrossed) : "-"} />
         <Line k="Fee" v={q ? `${fmt(fromStroops(q.fee), 4)} ${inst.quote.code}` : "-"} />
         <Line k={`Min out (${slip}% slippage)`} v={minOut !== null ? `${fmt(fromStroops(minOut), 4)} ${recv.code}` : "-"} />

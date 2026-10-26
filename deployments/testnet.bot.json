@@ -76,8 +76,8 @@
     ]
   },
   "state": {
-    "nav": 1.0000035584,
-    "nav_at": "2026-10-26T00:42:26.094Z",
+    "nav": 1.0000036391,
+    "nav_at": "2026-10-26T00:56:31.908Z",
     "note": "simulated LBOND NAV (1.00 at start, 5% APR accrual); accelerated demo runs do not persist"
   },
   "purpose": "Testnet. Market makers (mm_a, mm_b) and an arbitrageur (arb) operated by the Lotus team, trading assets the team issues (LBOND) or mints through lotus_vault (lUSDCb).",
@@ -102,7 +102,7 @@
     }
   },
   "lotus_vault_contract": "CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG",
-  "updated_at": "2026-10-26T00:42:26.096Z",
+  "updated_at": "2026-10-26T00:56:31.908Z",
   "legacy_receipt": {
     "code": "lUSDC",
     "issuer": "GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6",

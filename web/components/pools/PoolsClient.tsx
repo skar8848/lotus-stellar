@@ -1,99 +1,138 @@
 "use client";
 
+// /pools: the New position flow (one Uniswap-style "add liquidity" page, strategy chosen last) and Your positions
+// across the four strategies. The pool swap + venue comparison opens in a dialog from the header. The separate
+// two-way LP pool keeps its own builder, reached with "Advanced: two-way position" (?pool=<instance id>).
+
 import { useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Dot, ExplorerLink, Panel, Segmented, Stat } from "@/components/common";
-import { VaultTab } from "@/components/vault/VaultTab";
 import { fromStroops } from "@/lib/amount";
+import { midPrice } from "@/lib/book";
 import { useConfig, useNet } from "@/lib/config-context";
+import type { PoolInstance } from "@/lib/config-types";
 import { usePolling } from "@/lib/hooks";
+import { pickReference } from "@/lib/orderRoute";
 import { SUPPORTED_ABI, getPoolClient, resetMockPool } from "@/lib/pool";
 import { MAX_BIN, MIN_BIN, planPosition } from "@/lib/poolGrid";
 import { poolStatusLabel, poolYield } from "@/lib/poolUi";
-import { midPrice } from "@/lib/book";
-import { pickReference } from "@/lib/orderRoute";
 import { assetReady, fetchOrderBook, fmt } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { MyPositions } from "./MyPositions";
+import { NewPosition } from "./NewPosition";
 import { PoolRangeChart } from "./PoolRangeChart";
 import { PoolSwap } from "./PoolSwap";
-import { NewOrder, directionalPools } from "./NewOrder";
 import { PositionBuilder } from "./PositionBuilder";
 import { initialPoolForm, poolEffective, type PoolForm } from "./RangeInputs";
-
-const topTrigger =
-  "h-auto flex-none rounded-none border-0 bg-transparent px-2 py-1 text-lg font-semibold text-mutedfg/60 shadow-none hover:text-mutedfg data-[state=active]:bg-transparent data-[state=active]:text-white data-[state=active]:shadow-none dark:data-[state=active]:bg-transparent dark:data-[state=active]:border-transparent";
+import { useBlendApr } from "./useBlendApr";
+import { directionalPools } from "./useOrder";
+import { YourPositions } from "./YourPositions";
 
 export function PoolsClient() {
-  const receiptCode = useConfig().receipt.code;
+  const config = useConfig();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const tab = params.get("tab") === "vault" ? "vault" : "pool";
+  const pools = config.pools;
+  const directional = useMemo(() => directionalPools(pools), [pools]);
+  const twoWayInst = directional.others.find((p) => p.supportsTwoWay && !p.mock) ?? null;
+  const picked = pools.find((p) => p.id === params.get("pool")) ?? null;
+  const advanced = picked && !directional.list.includes(picked) ? picked : null;
+  const [version, setVersion] = useState(0);
+  const [swapOpen, setSwapOpen] = useState(false);
 
-  const setTab = (t: string) => {
+  const yieldStrategy = config.strategies.find((s) => s.lotusVault === config.lotusVault) ?? null;
+  const apr = useBlendApr(advanced ? null : yieldStrategy);
+  const aprText = apr.aprPct !== null ? `${apr.aprPct.toFixed(2)}% APR` : apr.observedPct !== null ? `${apr.observedPct.toFixed(2)}% APR` : null;
+
+  const go = (id: string | null) => {
     const sp = new URLSearchParams(params.toString());
-    sp.set("tab", t);
-    router.replace(`${pathname}?${sp.toString()}`, { scroll: false });
+    if (id) sp.set("pool", id);
+    else sp.delete("pool");
+    const q = sp.toString();
+    router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
   };
 
+  const mock = pools.some((p) => p.mock);
+
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-16 pt-5 sm:px-6">
-      <Tabs value={tab} onValueChange={setTab} className="gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Pools</h1>
-            <p className="mt-1 max-w-2xl text-xs text-mutedfg">
-              The Lotus pool is a directional range pool on Soroban. The Lotus vault turns USDC into the {receiptCode} receipt that trades on the SDEX.
-            </p>
-          </div>
-          <TabsList className="h-auto gap-0 bg-transparent p-0">
-            <TabsTrigger value="pool" className={topTrigger} data-testid="pools-tab-pool">
-              Lotus pool
-            </TabsTrigger>
-            <TabsTrigger value="vault" className={topTrigger} data-testid="pools-tab-vault">
-              Vault &amp; receipt ({receiptCode})
-            </TabsTrigger>
-          </TabsList>
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-5 sm:px-6" data-testid="pools-page">
+      {mock ? (
+        <div className="mb-4 rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 text-xs" data-testid="pool-mock-banner">
+          <span className="font-medium text-primary">Local simulation.</span>{" "}
+          <span className="text-mutedfg">
+            No lotus_pool contract is deployed (deployments/testnet.pool.json is missing): pool actions change local state only and no transaction is sent.
+          </span>{" "}
+          <button
+            className="text-primary underline underline-offset-2"
+            onClick={() => {
+              resetMockPool();
+              window.location.reload();
+            }}
+          >
+            Reset simulation
+          </button>
         </div>
-        <TabsContent value="pool">
-          <PoolTab />
-        </TabsContent>
-        <TabsContent value="vault">
-          <VaultTab />
-        </TabsContent>
-      </Tabs>
+      ) : null}
+
+      {advanced ? (
+        <AdvancedTwoWay inst={advanced} onBack={() => go(null)} />
+      ) : (
+        <>
+          <NewPosition
+            apr={apr}
+            onCreated={() => setVersion((v) => v + 1)}
+            onOpenSwap={() => setSwapOpen(true)}
+            twoWayInst={twoWayInst}
+            onAdvanced={() => twoWayInst && go(twoWayInst.id)}
+          />
+          <div id="your-positions" className="mt-12 scroll-mt-20">
+            <YourPositions version={version} aprText={aprText} onNew={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
+          </div>
+          <SwapDialog open={swapOpen} onOpenChange={setSwapOpen} list={directional.list} onDone={() => setVersion((v) => v + 1)} />
+        </>
+      )}
     </main>
   );
 }
 
-function PoolTab() {
+/** Pool swap + venue comparison, against the idle or the vault-backed instance. */
+function SwapDialog({ open, onOpenChange, list, onDone }: { open: boolean; onOpenChange: (v: boolean) => void; list: PoolInstance[]; onDone: () => void }) {
   const config = useConfig();
   const net = useNet();
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const wallet = useWallet();
-  const [form, setForm] = useState<PoolForm>(initialPoolForm);
-  const [panel, setPanel] = useState<"add" | "swap">("add");
+  const [id, setId] = useState<string | null>(null);
+  const inst = list.find((p) => p.id === id) ?? list[0];
+  const client = useMemo(() => (inst ? getPoolClient(net, inst) : null), [net, inst]);
+  if (!inst || !client) return null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-md" data-testid="swap-dialog">
+        <DialogHeader>
+          <DialogTitle>Swap on the Lotus pool</DialogTitle>
+          <DialogDescription>Takes liquidity from the pool bins, compared live with the SDEX path for the same input.</DialogDescription>
+        </DialogHeader>
+        {list.length > 1 ? (
+          <Segmented value={inst.id} onChange={setId} size="sm" testId="swap-pool-picker" options={list.map((p) => ({ value: p.id, label: p.label }))} />
+        ) : null}
+        <PoolSwap key={inst.id} inst={inst} client={client} horizon={config.horizon} network={config.network} onDone={onDone} />
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-  const pools = config.pools;
-  // the New order flow uses the directional instances; the two-way instance keeps its own builder (?pool=<id>)
-  const poolParam = params.get("pool");
-  const { directional, inst } = useMemo(() => {
-    const d = directionalPools(pools);
-    const picked = pools.find((p) => p.id === poolParam);
-    return { directional: d, inst: picked ?? d.idle ?? d.list[0] ?? pools[0] };
-  }, [pools, poolParam]);
-  // an instance outside the New order pair (the separate two-way LP pool) keeps the legacy builder
-  const isTwoWayInst = !directional.list.includes(inst);
-  const twoWayInst = directional.others.find((p) => p.supportsTwoWay && !p.mock);
+/** The separate two-way LP instance: the previous builder (directional or two-way), its depth chart and positions. */
+function AdvancedTwoWay({ inst, onBack }: { inst: PoolInstance; onBack: () => void }) {
+  const config = useConfig();
+  const net = useNet();
+  const wallet = useWallet();
+  const [form, setForm] = useState<PoolForm>({ ...initialPoolForm, mode: "TwoWay" });
   const client = useMemo(() => getPoolClient(net, inst), [net, inst]);
-  const live = !inst.mock && !!inst.contract;
   const yieldInfo = poolYield(inst, config.strategies);
+  const live = !inst.mock && !!inst.contract;
 
   const cfgFn = useCallback(() => client.getConfig(), [client]);
   const cfgQ = usePolling(cfgFn, 60000, true);
@@ -112,24 +151,19 @@ function PoolTab() {
 
   const asks = depthQ.data?.asks ?? [];
   const bids = depthQ.data?.bids ?? [];
-  const bestAsk = asks.length > 0 ? Number(asks[0].price) / 1e7 : null; // lowest ask bin
-  const bestBid = bids.length > 0 ? Number(bids[bids.length - 1].price) / 1e7 : null; // highest bid bin
+  const bestAsk = asks.length > 0 ? Number(asks[0].price) / 1e7 : null;
+  const bestBid = bids.length > 0 ? Number(bids[bids.length - 1].price) / 1e7 : null;
   const poolMid = bestAsk !== null && bestBid !== null ? (bestAsk + bestBid) / 2 : (bestAsk ?? bestBid);
-
-  // reference price: SDEX LBOND/receipt mid, then LBOND/USDC mid, then the pool's own mid, then 1.0
-  const horizon = config.horizon;
-  const receipt = config.receipt;
   const booksFn = useCallback(async () => {
     const ok = assetReady(inst.base) && !!inst.base.issuer;
     const [rb, ub] = await Promise.all([
-      ok && assetReady(receipt) ? fetchOrderBook(horizon, inst.base, receipt, 5).catch(() => null) : Promise.resolve(null),
-      ok && assetReady(inst.quote) ? fetchOrderBook(horizon, inst.base, inst.quote, 5).catch(() => null) : Promise.resolve(null),
+      ok && assetReady(config.receipt) ? fetchOrderBook(config.horizon, inst.base, config.receipt, 5).catch(() => null) : Promise.resolve(null),
+      ok && assetReady(inst.quote) ? fetchOrderBook(config.horizon, inst.base, inst.quote, 5).catch(() => null) : Promise.resolve(null),
     ]);
     return { receipt: rb, usdc: ub };
-  }, [horizon, inst.base, inst.quote, receipt]);
+  }, [config.horizon, config.receipt, inst.base, inst.quote]);
   const booksQ = usePolling(booksFn, 10000, true);
-  const ref = pickReference({ receiptMid: midPrice(booksQ.data?.receipt ?? null), usdcMid: midPrice(booksQ.data?.usdc ?? null), poolMid });
-  const refPrice = ref.price;
+  const refPrice = pickReference({ receiptMid: midPrice(booksQ.data?.receipt ?? null), usdcMid: midPrice(booksQ.data?.usdc ?? null), poolMid }).price;
 
   const eff = poolEffective(form, refPrice);
   const plan = useMemo(
@@ -139,58 +173,28 @@ function PoolTab() {
         startPrice: eff.start,
         endPrice: eff.end,
         shape: form.shape,
-        // a placeholder size keeps the preview alive before the user types an amount
         amount: Number(form.amount) > 0 ? form.amount : "1",
         stepBps: inst.binStepBps,
         feeBps: inst.feeBps,
       }),
     [form.side, form.shape, form.amount, eff.start, eff.end, inst.binStepBps, inst.feeBps],
   );
-
-  const refreshAll = useCallback(() => {
+  const refreshAll = () => {
     tvlQ.refresh();
     depthQ.refresh();
     posQ.refresh();
-    booksQ.refresh();
-  }, [tvlQ, depthQ, posQ, booksQ]);
-
-  const selectPool = (id: string) => {
-    const sp = new URLSearchParams(params.toString());
-    sp.set("pool", id);
-    router.replace(`${pathname}?${sp.toString()}`, { scroll: false });
-    // the New order panel switches instance when the yield toggle changes: keep the range and amount
-    const next = pools.find((p) => p.id === id);
-    if ((next && !directional.list.includes(next)) || isTwoWayInst) setForm(initialPoolForm);
   };
-
   const tvl = tvlQ.data;
-  const errored = cfgQ.error || depthQ.error;
 
   return (
     <div className="space-y-4" data-testid="pool-tab" data-pool={inst.id} data-mock={inst.mock ? "1" : "0"}>
-      {inst.mock ? (
-        <div className="rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 text-xs" data-testid="pool-mock-banner">
-          <span className="font-medium text-primary">Local simulation.</span>{" "}
-          <span className="text-mutedfg">
-            No lotus_pool contract is deployed yet (deployments/testnet.pool.json is missing), so this page runs the pool ABI against an in-browser simulation: positions, swaps, claims and removals below change local state only and no transaction is sent. It switches to the live contract on its own once the deployment file lists an instance.
-          </span>{" "}
-          <button
-            className="text-primary underline underline-offset-2"
-            onClick={() => {
-              resetMockPool();
-              window.location.reload();
-            }}
-          >
-            Reset simulation
-          </button>
-        </div>
-      ) : null}
-
-      {/* instance + stats */}
+      <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-mutedfg hover:text-white" data-testid="twoway-back">
+        <ArrowLeft className="size-3.5" /> Back to New position (directional range orders)
+      </button>
       <Panel
         title={
           <span className="flex flex-wrap items-center gap-2">
-            {inst.label}
+            Advanced: two-way position · {inst.label}
             <Badge variant="outline" className={cn("gap-1.5", inst.mock ? "border-primary/40 text-primary" : "border-green/40 text-green")}>
               <Dot ok={inst.mock ? null : true} />
               {poolStatusLabel(inst)}
@@ -199,141 +203,49 @@ function PoolTab() {
         }
         subtitle={
           <>
-            {inst.base.code} priced in {inst.quote.code} on a {inst.binStepBps / 100}% price grid. {yieldInfo.detail}
+            Classic LP with crossback (Mode::TwoWay) on the separate two-way instance: earns fees in both directions and refills when the price comes back, but can end up holding
+            mostly the other asset. {yieldInfo.detail}
           </>
         }
-        right={
-          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[11px] text-mutedfg">
-            {live ? <ExplorerLink kind="contract" id={inst.contract} network={config.network} label="pool contract" /> : null}
-            {inst.vault ? <ExplorerLink kind="contract" id={inst.vault} network={config.network} label="DeFindex vault" /> : null}
-          </div>
-        }
+        right={live ? <ExplorerLink kind="contract" id={inst.contract} network={config.network} label="pool contract" /> : null}
       >
-        {directional.list.length > 1 || isTwoWayInst ? (
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Segmented
-              value={inst.id}
-              onChange={selectPool}
-              size="sm"
-              className="w-auto flex-wrap"
-              testId="pool-picker"
-              options={directional.list.map((p) => ({ value: p.id, label: p.label }))}
-            />
-            {isTwoWayInst ? (
-              <span className="text-[11px] text-mutedfg">Showing the separate two-way LP pool (classic LP, not part of New order).</span>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-5" data-testid="pool-stats">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4" data-testid="pool-stats">
           <Stat
             label="TVL"
             value={tvl ? `${fmt(Number(fromStroops(tvl.quoteValue)) + Number(fromStroops(tvl.base)) * refPrice, 2)} ${inst.quote.code}` : "-"}
-            sub={tvl ? `${fmt(fromStroops(tvl.quoteValue), 2)} ${inst.quote.code} + ${fmt(fromStroops(tvl.base), 2)} ${inst.base.code} at pool mid` : "tvl()"}
+            sub={tvl ? `${fmt(fromStroops(tvl.quoteValue), 2)} ${inst.quote.code} + ${fmt(fromStroops(tvl.base), 2)} ${inst.base.code}` : "tvl()"}
           />
-          <Stat label={`${inst.base.code} in pool`} value={tvl ? fmt(fromStroops(tvl.base), 2) : "-"} sub="token balance held by the pool" />
           <Stat label="Fee tier" value={`${fmt(inst.feeBps / 100, 2)}%`} sub={`of the ${inst.quote.code} leg`} />
-          <Stat
-            label="Bin step"
-            value={`${fmt(inst.binStepBps / 100, 2)}%`}
-            sub={`${inst.binStepBps} bps, bins ${MIN_BIN}..${MAX_BIN}, up to ${cfgQ.data?.maxBinsPerSwap ?? "-"} bins per swap`}
-          />
-          <div className="col-span-2 min-w-0 sm:col-span-4 lg:col-span-1">
-            <div className="label">Yield on {inst.quote.code} leg</div>
-            <div className="mt-1 text-sm font-medium" data-testid="pool-yield">
-              {yieldInfo.short}
-            </div>
-            <div className="mt-0.5 text-xs text-mutedfg">{yieldInfo.tone === "live" ? "vault yield accrues to positions" : "no yield is claimed"}</div>
-          </div>
+          <Stat label="Bin step" value={`${fmt(inst.binStepBps / 100, 2)}%`} sub={`up to ${cfgQ.data?.maxBinsPerSwap ?? "-"} bins per swap`} />
+          <Stat label="Reference price" value={fmt(refPrice, 4, 4)} sub={`${inst.quote.code} per ${inst.base.code}`} />
         </div>
         {abiQ.data !== null && abiQ.data !== SUPPORTED_ABI ? (
           <p className="mt-3 text-xs text-primary" data-testid="pool-abi-warning">
-            This pool reports ABI version {abiQ.data}; this app was written for version {SUPPORTED_ABI}. Some fields may not decode correctly.
+            This pool reports ABI version {abiQ.data}; this app was written for version {SUPPORTED_ABI}.
           </p>
         ) : null}
-        {inst.supportsTwoWay && !inst.vault ? (
-          <p className="mt-3 text-xs text-mutedfg" data-testid="pool-twoway-badge">
-            Two-way LP positions are enabled on this pool.
-          </p>
-        ) : null}
-        {errored ? <p className="mt-3 text-xs text-destructive">Pool read failed: {String(cfgQ.error || depthQ.error)}</p> : null}
       </Panel>
 
-      {/* chart, then the builder, then positions on a phone; chart + positions left and the builder right on desktop */}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_460px] lg:grid-rows-[auto_minmax(0,1fr)]">
-        <Panel
-          className="lg:col-start-1 lg:row-start-1"
-          title="Depth by price bin"
-          subtitle="Liquidity resting in this pool instance. Your new order is drawn in pink as you set the range (same grid on the SDEX)."
-        >
-          <PoolRangeChart asks={asks} bids={bids} plan={panel === "add" ? plan : null} shapeOnly={!(Number(form.amount) > 0)} stepBps={inst.binStepBps} baseCode={inst.base.code} />
-        </Panel>
-
-        <aside className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-          <div className="card p-4 sm:p-5">
-            <Tabs value={panel} onValueChange={(v) => setPanel(v as "add" | "swap")} className="gap-3">
-              <TabsList className="h-auto gap-0 bg-transparent p-0">
-                <TabsTrigger value="add" className={topTrigger} data-testid="pool-tab-add">
-                  {isTwoWayInst ? "Add liquidity" : "New order"}
-                </TabsTrigger>
-                <TabsTrigger value="swap" className={topTrigger} data-testid="pool-tab-swap">
-                  Swap
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="add">
-                {isTwoWayInst ? (
-                <PositionBuilder
-                  inst={inst}
-                  client={client}
-                  cfg={cfgQ.data}
-                  strategies={config.strategies}
-                  form={form}
-                  setForm={setForm}
-                  plan={plan}
-                  refPrice={refPrice}
-                  network={config.network}
-                  onDone={refreshAll}
-                />
-                ) : (
-                  <NewOrder
-                    inst={inst}
-                    client={client}
-                    pools={pools}
-                    onSelectPool={selectPool}
-                    form={form}
-                    setForm={setForm}
-                    plan={plan}
-                    refPrice={refPrice}
-                    refSource={ref.source}
-                    books={{ usdc: booksQ.data?.usdc ?? null, receipt: booksQ.data?.receipt ?? null }}
-                    onDone={refreshAll}
-                  />
-                )}
-              </TabsContent>
-              <TabsContent value="swap">
-                <PoolSwap inst={inst} client={client} horizon={config.horizon} network={config.network} onDone={refreshAll} />
-              </TabsContent>
-            </Tabs>
-          </div>
-          {twoWayInst ? (
-            <p className="mt-2 px-1 text-[11px] text-mutedfg" data-testid="twoway-link">
-              {isTwoWayInst ? (
-                <button className="underline underline-offset-2 hover:text-primary" onClick={() => selectPool((directional.idle ?? directional.list[0] ?? pools[0]).id)}>
-                  Back to New order (directional range orders)
-                </button>
-              ) : (
-                <>
-                  Looking for a classic two-way LP position?{" "}
-                  <button className="underline underline-offset-2 hover:text-primary" onClick={() => selectPool(twoWayInst.id)}>
-                    Open the separate two-way pool
-                  </button>
-                </>
-              )}
-            </p>
-          ) : null}
-        </aside>
-
-        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="min-w-0 space-y-4">
+          <Panel title="Depth by price bin" subtitle="Liquidity resting in this instance; your new position in pink.">
+            <PoolRangeChart asks={asks} bids={bids} plan={plan} shapeOnly={!(Number(form.amount) > 0)} stepBps={inst.binStepBps} baseCode={inst.base.code} />
+          </Panel>
           <MyPositions inst={inst} client={client} positions={posQ} network={config.network} onChanged={refreshAll} />
+        </div>
+        <div className="card p-4 sm:p-5">
+          <PositionBuilder
+            inst={inst}
+            client={client}
+            cfg={cfgQ.data}
+            strategies={config.strategies}
+            form={form}
+            setForm={setForm}
+            plan={plan}
+            refPrice={refPrice}
+            network={config.network}
+            onDone={refreshAll}
+          />
         </div>
       </div>
     </div>

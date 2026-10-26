@@ -42,7 +42,7 @@ const why = (r: string) => [
 
 const try_ = (r: string) => [
   { href: "/trade", title: "Trade", body: "SDEX orderbook, swaps, limit and range orders." },
-  { href: "/pools", title: "Pools", body: `The Lotus range pool and the ${r} vault.` },
+  { href: "/pools", title: "Pools", body: `One range order: Lotus pool or SDEX, with or without Blend yield (${r}).` },
   { href: "/portfolio", title: "Portfolio", body: "Balances, open offers and pool positions." },
 ];
 

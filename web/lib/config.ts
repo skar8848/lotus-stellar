@@ -25,7 +25,7 @@ type ContractFile = {
   defindex_vault?: string;
   defindex_strategy?: string;
   blend_pool?: string;
-  observed_apr?: { summary?: unknown; measured_on?: unknown };
+  observed_apr?: { summary?: unknown; measured_on?: unknown; window_b?: { lotus_net_apr_pct?: unknown; blend_supply_apr_pct?: unknown } };
   accounts?: Record<string, unknown>;
 };
 
@@ -206,7 +206,14 @@ export function loadConfig(): LotusConfig {
   const obs = c.observed_apr;
   if (obs && typeof obs.summary === "string" && typeof obs.measured_on === "string") {
     strategies = strategies.map((st) =>
-      st.lotusVault && st.lotusVault === c.lotus_vault_contract ? { ...st, observed: { summary: obs.summary as string, measuredOn: obs.measured_on as string } } : st,
+      st.lotusVault && st.lotusVault === c.lotus_vault_contract ? {
+            ...st,
+            observed: {
+              summary: obs.summary as string,
+              measuredOn: obs.measured_on as string,
+              aprPct: typeof obs.window_b?.lotus_net_apr_pct === "number" ? obs.window_b.lotus_net_apr_pct : undefined,
+            },
+          } : st,
     );
   }
 

@@ -1,12 +1,17 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
-import { AssetLink, Empty, ExplorerLink, Panel, TokenIcon } from "@/components/common";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { AssetLink, Empty, ExplorerLink, Panel, Spinner, TokenIcon, TxStatus } from "@/components/common";
 import { StatusBadge } from "@/components/vault/StrategyCard";
+import { useAccount } from "@/lib/account";
+import { tryStroops } from "@/lib/amount";
 import type { Strategy } from "@/lib/config-types";
-import { fmt, fromStroops, toStroops, type HorizonAccount } from "@/lib/stellar";
+import { useNet } from "@/lib/config-context";
+import { useTx } from "@/lib/hooks";
+import { addressArg, fmt, fromStroops, i128Arg, invokeContract, toStroops, type HorizonAccount } from "@/lib/stellar";
 import { fmtAmt, hasContract, inOffers } from "@/lib/vault";
+import { useWallet } from "@/lib/wallet";
 import { findBal } from "./util";
 
 /** Lotus receipts held, one row per Lotus vault: balance, share of supply, and the part resting in SDEX offers. */
@@ -16,7 +21,9 @@ export function ReceiptPositions({
   supplies,
   network,
   loading,
+  onChanged,
 }: {
+  onChanged?: () => void;
   strategies: Strategy[];
   account: HorizonAccount | null;
   /** account not loaded yet: show dashes instead of "no trustline" */
@@ -28,8 +35,9 @@ export function ReceiptPositions({
   return (
     <Panel
       title="Lotus receipts"
-      subtitle="Receipt tokens from the Lotus vault (USDC in, receipt out 1:1). They trade on the SDEX like any asset."
-      className="min-w-0"
+      id="receipts"
+      subtitle="Receipt tokens of the Lotus vault: USDC in, receipt out 1:1, invested in DeFindex on Blend. You get them with the Stellar DEX + Blend yield strategy on Pools; redeem them for USDC here."
+      className="min-w-0 scroll-mt-20"
     >
       {list.length === 0 ? (
         <Empty>No Lotus vault is configured.</Empty>
@@ -78,13 +86,12 @@ export function ReceiptPositions({
                   }
                 />
                 <div className="md:text-right">
-                  <Link
-                    href={`/pools?tab=vault&strategy=${encodeURIComponent(s.id)}`}
-                    className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                    data-testid={`receipt-manage-${s.id}`}
-                  >
-                    Deposit or redeem <ArrowRight className="size-3" />
-                  </Link>
+                  {hasContract(s) && balance !== null ? (
+                    // stays mounted at 0 so the confirmation of a full redeem remains on screen
+                    <RedeemReceipt strategy={s} max={balance - offers > 0n ? balance - offers : 0n} inOffers={offers} network={network} onDone={onChanged} />
+                  ) : (
+                    <span className="text-[11px] text-mutedfg">{hasContract(s) ? "no trustline" : "no contract"}</span>
+                  )}
                 </div>
               </li>
             );
@@ -101,6 +108,65 @@ function Cell({ label, value, sub, muted }: { label: string; value: string; sub?
       <div className="label">{label}</div>
       <div className={`num mt-0.5 truncate text-sm font-medium ${muted ? "text-mutedfg" : ""}`}>{value}</div>
       {sub ? <div className="mt-0.5 text-[11px] leading-snug text-mutedfg">{sub}</div> : null}
+    </div>
+  );
+}
+
+/** Redeem lUSDCb -> USDC (lotus_vault.redeem), 1:1 while the vault is fully backed. Was the Vault tab's Redeem form. */
+function RedeemReceipt({ strategy, max, inOffers: locked, network, onDone }: { strategy: Strategy; max: bigint; inOffers: bigint; network: string; onDone?: () => void }) {
+  const net = useNet();
+  const wallet = useWallet();
+  const acct = useAccount();
+  const tx = useTx("Redeem");
+  const [amt, setAmt] = useState("");
+  const v = tryStroops(amt);
+  const over = v !== null && v > max;
+  const r = strategy.receipt.code;
+  const u = strategy.underlying.code;
+  const redeem = () =>
+    tx.run(async (onStage) => {
+      if (!wallet.address) throw new Error("Connect a wallet first");
+      if (v === null || v <= 0n) throw new Error("Enter an amount");
+      const res = await invokeContract(net, {
+        contractId: strategy.lotusVault,
+        method: "redeem",
+        args: [addressArg(wallet.address), i128Arg(v)],
+        source: wallet.address,
+        sign: wallet.sign,
+        onStage: (st) => onStage(st, "redeem"),
+      });
+      setAmt("");
+      acct.refresh();
+      onDone?.();
+      const paid = typeof res.result === "bigint" ? `${fromStroops(res.result)} ${u}` : u;
+      return { hash: res.hash, result: res.result, note: `burnt ${fromStroops(v)} ${r}, returned ${paid}` };
+    });
+  return (
+    <div className="flex flex-col items-stretch gap-1.5 md:items-end" data-testid={`redeem-${strategy.id}`}>
+      <div className="flex items-center gap-1.5">
+        <div className="flex h-8 items-center rounded-lg border border-line bg-black/20 px-2">
+          <input
+            inputMode="decimal"
+            placeholder="0"
+            value={amt}
+            onChange={(e) => setAmt(e.target.value.replace(/[^0-9.]/g, ""))}
+            className="w-20 bg-transparent text-right text-sm tabular-nums outline-none"
+            data-testid={`redeem-amount-${strategy.id}`}
+          />
+          <button type="button" className="ml-1.5 text-[10px] text-primary hover:underline" onClick={() => setAmt(fromStroops(max))}>
+            max
+          </button>
+        </div>
+        <Button size="sm" variant="outline" disabled={tx.running || max === 0n || v === null || v <= 0n || over} onClick={redeem} data-testid={`redeem-submit-${strategy.id}`}>
+          {tx.running ? <Spinner /> : null}
+          Redeem {r} → {u}
+        </Button>
+      </div>
+      {over ? <span className="text-[11px] text-destructive">more than your free {r} ({fmtAmt(max)})</span> : null}
+      {max === 0n ? <span className="text-[11px] text-mutedfg">{locked > 0n ? `all in offers: cancel them to redeem` : `nothing to redeem`}</span> : null}
+      <div className="w-full max-w-sm text-left">
+        <TxStatus state={tx.state} network={network} onDismiss={tx.reset} />
+      </div>
     </div>
   );
 }

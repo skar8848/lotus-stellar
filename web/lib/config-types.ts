@@ -25,7 +25,7 @@ export type Strategy = {
   blendPool: string;
   notes: string;
   /** Yield measured by the deployment team (testnet.contract.json observed_apr). Not computed by this app, never a forecast. */
-  observed?: { summary: string; measuredOn: string };
+  observed?: { summary: string; measuredOn: string; /** net APR of the last measured window, percent */ aprPct?: number };
   /** "file" when read from testnet.strategies.json, "derived" when synthesised from testnet.contract.json. */
   origin: "file" | "derived";
 };

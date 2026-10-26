@@ -1,19 +1,25 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+// /trade: classic exchange layout on the Stellar DEX.
+//   desktop: [market bar] / [chart | order book + trades] / [bottom tabs], order entry in a full-height right column
+//   mobile : everything stacked (market bar, chart, order entry, book, bottom tabs)
+// Every action is a wallet-signed Stellar transaction (no session keys, no auto-sign).
+
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AssetLink, Dot, Empty, ExplorerLink, Segmented } from "@/components/common";
+import { AssetLink, Empty, ExplorerLink } from "@/components/common";
 import { useAccount } from "@/lib/account";
 import { bestPrices, depthBars, midPrice } from "@/lib/book";
 import { useConfig } from "@/lib/config-context";
 import { usePolling } from "@/lib/hooks";
 import { buildMarkets, pickMarket } from "@/lib/markets";
-import { fetchCandles, fetchOffers, fetchOrderBook, fetchTrades, fmt } from "@/lib/stellar";
+import { fetchCandles, fetchOffers, fetchOrderBook, fetchTrades } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { DepthChart, OrderBookTable, RecentTrades } from "./BookPanels";
+import { BottomPanel } from "./BottomPanel";
 import type { PricePick } from "./LimitTab";
-import { OpenOffers } from "./OpenOffers";
+import { MarketBar, dayStats } from "./MarketBar";
 import { OrderPanel, type OrderTab } from "./OrderPanel";
 import { PriceChart } from "./PriceChart";
 import { computeRange, effective, initialRangeForm, type RangeForm } from "./rangeState";
@@ -24,6 +30,54 @@ const TFS = [
   { label: "15m", ms: 900_000 },
   { label: "1h", ms: 3_600_000 },
 ] as const;
+
+const LG = "(min-width: 1024px)";
+function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(LG);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia(LG).matches,
+    () => true,
+  );
+}
+
+/** Height left under the sticky nav (desktop layout fills the viewport, like a trading terminal). */
+function useFillHeight(ref: React.RefObject<HTMLElement | null>, enabled: boolean): number | null {
+  const [h, setH] = useState<number | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const calc = () => {
+      const el = ref.current;
+      if (!el) return;
+      setH(Math.max(560, window.innerHeight - el.offsetTop));
+    };
+    calc();
+    window.addEventListener("resize", calc);
+    // banners above the terminal (e.g. a hint under the nav) can appear after mount and move it down
+    const ro = new ResizeObserver(calc);
+    ro.observe(document.body);
+    return () => {
+      window.removeEventListener("resize", calc);
+      ro.disconnect();
+    };
+  }, [ref, enabled]);
+  return enabled ? h : null;
+}
+
+function useElementHeight(ref: React.RefObject<HTMLElement | null>): number {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setH(Math.floor(entries[0].contentRect.height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return h;
+}
 
 export function TradeClient() {
   const config = useConfig();
@@ -38,21 +92,31 @@ export function TradeClient() {
 
   const [tab, setTab] = useState<OrderTab>("swap");
   const [tfIdx, setTfIdx] = useState(2);
+  const [view, setView] = useState<"price" | "depth">("price");
+  const [midTab, setMidTab] = useState<"book" | "trades">("book");
   const [slippage, setSlippage] = useState(0.5);
   const [pick, setPick] = useState<PricePick>(null);
   const [form, setForm] = useState<RangeForm>(initialRangeForm);
+
+  const desktop = useIsDesktop();
+  const mainRef = useRef<HTMLElement>(null);
+  const fill = useFillHeight(mainRef, desktop);
+  const chartBox = useRef<HTMLDivElement>(null);
+  const chartH = useElementHeight(chartBox);
 
   const base = market?.base ?? config.rwa;
   const quote = market?.quote ?? config.receipt;
   const ready = !!market && !!base.issuer && !!quote.issuer;
   const horizon = config.horizon;
 
-  const bookFn = useCallback(() => fetchOrderBook(horizon, base, quote, 30), [horizon, base, quote]);
+  const bookFn = useCallback(() => fetchOrderBook(horizon, base, quote, 50), [horizon, base, quote]);
   const book = usePolling(bookFn, 5000, ready);
-  const tradesFn = useCallback(() => fetchTrades(horizon, base, quote, 30), [horizon, base, quote]);
+  const tradesFn = useCallback(() => fetchTrades(horizon, base, quote, 40), [horizon, base, quote]);
   const trades = usePolling(tradesFn, 10000, ready);
   const candlesFn = useCallback(() => fetchCandles(horizon, base, quote, TFS[tfIdx].ms, 200), [horizon, base, quote, tfIdx]);
   const candles = usePolling(candlesFn, 20000, ready);
+  const dayFn = useCallback(() => fetchCandles(horizon, base, quote, 3_600_000, 48), [horizon, base, quote]);
+  const dayCandles = usePolling(dayFn, 60000, ready);
   const offersFn = useCallback(() => (wallet.address ? fetchOffers(horizon, wallet.address) : Promise.resolve([])), [horizon, wallet.address]);
   const offers = usePolling(offersFn, 8000, !!wallet.address);
 
@@ -61,6 +125,7 @@ export function TradeClient() {
   const last = trades.data?.[0]?.price ?? null;
   const mid = midPrice(bk);
   const refPrice = mid ?? last ?? 1;
+  const day = useMemo(() => dayStats(dayCandles.data, last), [dayCandles.data, last]);
 
   const rangeResult = useMemo(() => computeRange(form, refPrice), [form, refPrice]);
   const eff = effective(form, refPrice);
@@ -94,6 +159,7 @@ export function TradeClient() {
     book.refresh();
     trades.refresh();
     candles.refresh();
+    dayCandles.refresh();
     offers.refresh();
     acct.refresh();
   };
@@ -108,157 +174,185 @@ export function TradeClient() {
     );
   }
 
-  return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-16 pt-5 sm:px-6" data-market={market.id}>
-      {/* market header */}
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold tracking-tight" data-testid="market-title">
-              {market.label}
-            </h1>
-            <Segmented
-              value={market.id}
-              onChange={setMarket}
-              size="sm"
-              className="w-auto"
-              testId="market-select"
-              options={markets.map((m) => ({ value: m.id, label: m.label, title: m.blurb }))}
-            />
-          </div>
-          <p className="mt-1 max-w-2xl text-xs text-mutedfg">{market.blurb}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs" data-testid="market-stats">
-          <Stat k="Last" v={last !== null ? fmt(last, 4, 4) : "-"} />
-          <Stat k="Mid" v={mid !== null ? fmt(mid, 4, 4) : "-"} />
-          <Stat k="Bid" v={bid !== null ? fmt(bid, 4, 4) : "-"} className="text-green" />
-          <Stat k="Ask" v={ask !== null ? fmt(ask, 4, 4) : "-"} className="text-red" />
-          <span className="flex items-center gap-1.5 text-mutedfg">
-            <Dot ok={book.error ? false : book.data ? true : null} pulse={book.loading} />
-            {book.error ? "offline" : "live"}
-          </span>
-        </div>
-      </div>
+  const bottom = (
+    <BottomPanel
+      markets={markets}
+      market={market}
+      offers={offers}
+      onChanged={onDone}
+      resizable={desktop}
+      // keep at least ~300px for the chart row
+      maxHeight={fill ? Math.max(140, fill - 48 - 300) : 600}
+    />
+  );
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_440px]">
-        {/* chart */}
-        <section className="card min-w-0 p-4 sm:p-5 lg:col-start-1 lg:row-start-1" data-testid="chart-card">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              {market.base.code} <span className="text-mutedfg">/ {market.quote.code}</span>
-              <span className="hidden text-[11px] font-normal text-mutedfg sm:inline">
-                <AssetLink asset={market.base} label="base" /> · <AssetLink asset={market.quote} label="quote" />
-              </span>
+  return (
+    <main
+      ref={mainRef}
+      className="flex w-full min-w-0 flex-1 flex-col bg-background lg:flex-none lg:flex-row lg:overflow-hidden"
+      style={desktop && fill ? { height: fill } : undefined}
+      data-market={market.id}
+      data-testid="trade-terminal"
+    >
+      {/* left: market bar + chart / book + bottom tabs */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <MarketBar
+          markets={markets}
+          market={market}
+          onSelect={setMarket}
+          last={last}
+          mid={mid}
+          bid={bid}
+          ask={ask}
+          day={day}
+          live={book.error ? false : book.data ? true : null}
+          loading={book.loading}
+        />
+
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {/* chart */}
+          <section className="flex min-w-0 flex-1 flex-col border-b border-border md:border-b-0 md:border-r" data-testid="chart-card">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1">
+              <div className="flex items-center gap-0.5">
+                {(["price", "depth"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setView(v)}
+                    data-testid={`view-${v}`}
+                    className={cn(
+                      "border-b-2 px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                      view === v ? "border-primary text-foreground" : "border-transparent text-mutedfg hover:text-foreground",
+                    )}
+                  >
+                    {v === "price" ? "Chart" : "Depth"}
+                  </button>
+                ))}
+              </div>
+              {view === "price" ? (
+                <div className="flex items-center gap-0.5">
+                  {TFS.map((t, i) => (
+                    <button
+                      key={t.label}
+                      type="button"
+                      onClick={() => setTfIdx(i)}
+                      data-testid={`tf-${t.label}`}
+                      className={cn("rounded px-2 py-0.5 text-[11px] font-medium transition", tfIdx === i ? "bg-white/10 text-foreground" : "text-mutedfg hover:text-foreground")}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[11px] text-mutedfg">
+                  {market.base.code} vs {market.quote.code}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-1">
-              {TFS.map((t, i) => (
+            <div ref={chartBox} className="relative h-[340px] min-h-0 md:h-[420px] lg:h-auto lg:flex-1">
+              {view === "price" ? (
+                <PriceChart
+                  candles={candles.data ?? []}
+                  line={line}
+                  depth={depth}
+                  range={rangeLine}
+                  bins={bins}
+                  refPrice={refPrice}
+                  onRangeChange={tab === "range" ? onRangeDrag : undefined}
+                  onRecenter={tab === "range" ? recenter : undefined}
+                  height={Math.max(200, chartH)}
+                />
+              ) : (
+                <div className="flex h-full flex-col justify-center px-4 py-3">
+                  <DepthChart book={bk} height={Math.max(140, chartH - 50)} />
+                </div>
+              )}
+            </div>
+            <p className="shrink-0 truncate border-t border-border px-3 py-1 text-[10px] text-mutedfg" title={tab === "range" ? "Drag the Start / End handles to set your range" : undefined}>
+              {tab === "range"
+                ? "Drag the Start / End handles to set your range; dashed lines are the levels to quote. Bars at right: the book (pink = inside your range)."
+                : "Candles: Horizon trade aggregations (periods with trades only). Bars at right: cumulative depth."}
+              {candles.error ? <span className="text-destructive"> Candles unavailable: {candles.error}</span> : null}
+              <span className="hidden lg:inline">
+                {" "}
+                · <AssetLink asset={market.base} network={config.network} className="text-[10px]" /> / <AssetLink asset={market.quote} network={config.network} className="text-[10px]" />
+              </span>
+              <span className="hidden xl:inline">
+                {" "}
+                · Issuer of {market.base.code}: {market.base.issuer ? <ExplorerLink kind="account" id={market.base.issuer} network={config.network} className="text-[10px]" /> : "-"} · receipt issuer:{" "}
+                {market.receipt.issuer ? <ExplorerLink kind="account" id={market.receipt.issuer} network={config.network} className="text-[10px]" /> : "-"}
+              </span>
+            </p>
+          </section>
+
+          {/* order book / trades */}
+          <section className="flex h-[380px] w-full shrink-0 flex-col md:h-auto md:w-[250px] xl:w-[280px]" data-testid="book-card">
+            <div className="flex shrink-0 items-center gap-1 border-b border-border px-2">
+              {(
+                [
+                  { id: "book", label: "Order book" },
+                  { id: "trades", label: "Trades" },
+                ] as const
+              ).map((t) => (
                 <button
-                  key={t.label}
-                  onClick={() => setTfIdx(i)}
-                  data-testid={`tf-${t.label}`}
-                  className={cn("rounded-md px-2.5 py-1 text-xs font-medium transition", tfIdx === i ? "bg-white/10 text-white" : "text-mutedfg hover:text-white")}
+                  key={t.id}
+                  type="button"
+                  onClick={() => setMidTab(t.id)}
+                  data-testid={`mid-tab-${t.id}`}
+                  className={cn(
+                    "border-b-2 px-2.5 py-2 text-xs font-medium transition-colors",
+                    midTab === t.id ? "border-primary text-foreground" : "border-transparent text-mutedfg hover:text-foreground",
+                  )}
                 >
                   {t.label}
                 </button>
               ))}
+              <span className="ml-auto pr-1 text-[10px] text-mutedfg">price in {market.quote.code}</span>
             </div>
-          </div>
-          <div className="mt-3">
-            <PriceChart
-              candles={candles.data ?? []}
-              line={line}
-              depth={depth}
-              range={rangeLine}
-              bins={bins}
-              refPrice={refPrice}
-              onRangeChange={tab === "range" ? onRangeDrag : undefined}
-              onRecenter={tab === "range" ? recenter : undefined}
-              height={380}
-            />
-          </div>
-          <p className="mt-2 text-[11px] text-mutedfg">
-            {tab === "range"
-              ? "Drag the Start / End handles to set your range; the dashed lines are the levels that will be quoted. Bars at right: current book (pink = inside your range)."
-              : "Candles come from Horizon trade aggregations (only periods with trades exist). Bars at right: cumulative depth, bids green and asks red."}
-            {candles.error ? <span className="text-destructive"> Candles unavailable: {candles.error}</span> : null}
-          </p>
-        </section>
-
-        {/* order panel */}
-        <aside className="min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1">
-          <OrderPanel
-            market={market}
-            book={bk}
-            tab={tab}
-            onTab={setTab}
-            slippage={slippage}
-            onSlippage={setSlippage}
-            pick={pick}
-            form={form}
-            setForm={setForm}
-            rangeResult={rangeResult}
-            refPrice={refPrice}
-            onDone={onDone}
-          />
-        </aside>
-
-        {/* book + trades */}
-        <div className="grid min-w-0 gap-4 md:grid-cols-2 lg:col-start-1 lg:row-start-2">
-          <section className="card p-4 sm:p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Order book</h2>
-              <span className="text-[11px] text-mutedfg">refreshes every 5s</span>
+            {book.error && midTab === "book" ? <p className="shrink-0 px-3 py-1 text-[11px] text-destructive">{book.error}</p> : null}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {midTab === "book" ? (
+                <OrderBookTable
+                  book={bk}
+                  baseCode={market.base.code}
+                  quoteCode={market.quote.code}
+                  onPick={(price) => {
+                    setPick({ price, nonce: Date.now() });
+                    setTab("limit");
+                  }}
+                />
+              ) : (
+                <div className="h-full overflow-auto scroll-thin">
+                  <RecentTrades trades={trades.data} horizon={horizon} baseCode={market.base.code} quoteCode={market.quote.code} network={config.network} />
+                  {trades.error ? <p className="px-3 py-1 text-[11px] text-destructive">{trades.error}</p> : null}
+                </div>
+              )}
             </div>
-            {book.error ? <p className="mb-2 text-xs text-destructive">{book.error}</p> : null}
-            <OrderBookTable
-              book={bk}
-              baseCode={market.base.code}
-              quoteCode={market.quote.code}
-              onPick={(price) => {
-                setPick({ price, nonce: Date.now() });
-                setTab("limit");
-              }}
-            />
-          </section>
-          <section className="card p-4 sm:p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Recent trades</h2>
-              <span className="text-[11px] text-mutedfg">green = base bought</span>
-            </div>
-            <RecentTrades trades={trades.data} horizon={horizon} baseCode={market.base.code} quoteCode={market.quote.code} network={config.network} />
-            {trades.error ? <p className="mt-2 text-xs text-destructive">{trades.error}</p> : null}
           </section>
         </div>
 
-        {/* depth */}
-        <section className="card min-w-0 p-4 sm:p-5 lg:col-start-1 lg:row-start-3">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Cumulative depth</h2>
-            <span className="text-[11px] text-mutedfg">
-              {market.base.code} vs {market.quote.code}
-            </span>
-          </div>
-          <DepthChart book={bk} />
-        </section>
+        {desktop ? bottom : null}
       </div>
 
-      <div className="mt-4">
-        <OpenOffers markets={markets} market={market} offers={offers} onChanged={onDone} />
-      </div>
+      {/* right: order entry, full height */}
+      <aside className="w-full shrink-0 border-t border-border bg-card lg:w-[320px] lg:overflow-y-auto lg:border-l lg:border-t-0 scroll-thin" data-testid="order-column">
+        <OrderPanel
+          market={market}
+          book={bk}
+          tab={tab}
+          onTab={setTab}
+          slippage={slippage}
+          onSlippage={setSlippage}
+          pick={pick}
+          form={form}
+          setForm={setForm}
+          rangeResult={rangeResult}
+          refPrice={refPrice}
+          onDone={onDone}
+        />
+      </aside>
 
-      <p className="mt-4 text-[11px] text-mutedfg">
-        Testnet. Issuer of {market.base.code}: {market.base.issuer ? <ExplorerLink kind="account" id={market.base.issuer} network={config.network} /> : "-"} · receipt issuer:{" "}
-        {market.receipt.issuer ? <ExplorerLink kind="account" id={market.receipt.issuer} network={config.network} /> : "-"}
-      </p>
+      {desktop ? null : bottom}
     </main>
-  );
-}
-
-function Stat({ k, v, className }: { k: string; v: string; className?: string }) {
-  return (
-    <span className="flex items-baseline gap-1.5">
-      <span className="label">{k}</span>
-      <span className={cn("num text-sm font-medium", className)}>{v}</span>
-    </span>
   );
 }

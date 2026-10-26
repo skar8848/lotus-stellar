@@ -123,7 +123,7 @@ export function PortfolioClient() {
 
           <PoolPositions data={pools.data} address={address} network={config.network} onChanged={refreshAll} />
 
-          <ReceiptPositions strategies={config.strategies} account={acct.data} supplies={supplies.data} network={config.network} loading={accountLoading} />
+          <ReceiptPositions strategies={config.strategies} account={acct.data} supplies={supplies.data} network={config.network} loading={accountLoading} onChanged={refreshAll} />
 
           <div data-testid="portfolio-offers" className="[&_div:has(>button[data-value=market])]:hidden">
             <OpenOffers markets={markets} market={null} offers={offers} onChanged={refreshAll} />

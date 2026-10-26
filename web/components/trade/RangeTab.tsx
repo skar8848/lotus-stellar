@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { Info } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAccount } from "@/lib/account";
@@ -24,9 +23,9 @@ import {
 } from "@/lib/range";
 import { MAX_OPS_PER_TX, fmt, manageSellOfferOp, submitClassicChunked, type OrderBook } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import { cn } from "@/lib/utils";
 import { Segmented, Spinner, TxStatus } from "@/components/common";
 import { TrustlineNotice, useAssetAccess } from "./access";
+import { ActionButton, ExField, SummaryBox, SumRow, SumSep, Warn } from "./form";
 import { effective, type RangeForm } from "./rangeState";
 
 const MODES: { value: RangeMode; label: string; title: string }[] = [
@@ -143,17 +142,17 @@ export function RangeTab({
   const dir = form.mode === "buy" ? -1 : 1;
 
   return (
-    <div className="space-y-2" data-testid="range-tab">
+    <div className="space-y-2.5" data-testid="range-tab">
       <Link
         href="/pools"
         data-testid="range-new-order-link"
-        className="block rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-primary transition hover:bg-primary/10"
+        className="block rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-2 text-[11px] leading-relaxed text-primary transition hover:bg-primary/10"
       >
         Directional range order on the pool grid, waiting in the Lotus pool or on the SDEX, with or without yield: use{" "}
         <span className="font-medium underline underline-offset-2">New order on Pools</span>. This tab is the free-form SDEX ladder (any levels, two-sided bands).
       </Link>
-      <Segmented value={form.mode} onChange={setMode} options={MODES} testId="range-mode" size="sm" />
-      <p className="px-1 text-[11px] leading-relaxed text-mutedfg">
+      <Segmented value={form.mode} onChange={setMode} options={MODES} testId="range-mode" size="sm" className="rounded-lg [&>button]:rounded-md" />
+      <p className="text-[10px] leading-relaxed text-mutedfg">
         {form.mode === "sell" &&
           `Exit: ${market.base.code} is offered for ${market.quote.code} at every level of the range. Each level that fills is gone for good.`}
         {form.mode === "buy" &&
@@ -162,57 +161,61 @@ export function RangeTab({
           `Market making: bids below the split price, asks above it. A filled level never flips back automatically (unlike an AMM position): re-quote to continue.`}
       </p>
 
-      {/* total size */}
-      <div className="rounded-2xl bg-secondary px-4 py-3.5">
-        <div className="flex items-center justify-between text-sm text-mutedfg">
-          <span>Total size ({market.base.code})</span>
-          <span className="num text-[11px]">{summary.avgPrice !== null ? `${fmt(summary.avgPrice * Number(fromStroops(summary.totalBase)), 2)} ${market.quote.code} notional` : ""}</span>
-        </div>
-        <div className="mt-1 flex items-center justify-between gap-3">
-          <input
-            data-testid="range-total"
-            inputMode="decimal"
-            value={form.total}
-            placeholder="0"
-            onChange={(ev) => set({ total: ev.target.value.replace(/[^0-9.]/g, "") })}
-            className="w-full min-w-0 bg-transparent text-3xl font-medium tabular-nums outline-none placeholder:text-mutedfg/50 sm:text-4xl"
-          />
-          <span className="flex h-11 shrink-0 items-center gap-2 rounded-full bg-accent px-3.5 text-base font-medium">{market.base.code}</span>
-        </div>
-      </div>
+      <ExField
+        label={`Total size (${market.base.code})`}
+        right={
+          summary.avgPrice !== null ? (
+            <span className="num text-[10px]">{`${fmt(summary.avgPrice * Number(fromStroops(summary.totalBase)), 2)} ${market.quote.code} notional`}</span>
+          ) : null
+        }
+        testId="range-total"
+        value={form.total}
+        onChange={(v) => set({ total: v })}
+        placeholder="0"
+        unit={market.base.code}
+      />
 
       {/* range: start -> end */}
       <div className="grid grid-cols-2 gap-2">
-        <PriceField label="Start price" testId="range-from" value={e.from} sub={`${pct(fromN)}% vs mid`} quote={market.quote.code} onChange={(v) => set({ from: v })} />
-        <PriceField label="End price" testId="range-to" value={e.to} sub={`${pct(toN)}% vs mid`} quote={market.quote.code} onChange={(v) => set({ to: v })} />
+        <ExField label="Start" right={<span className="num text-[10px]">{pct(fromN)}%</span>} testId="range-from" value={e.from} onChange={(v) => set({ from: v })} unit={market.quote.code} />
+        <ExField label="End" right={<span className="num text-[10px]">{pct(toN)}%</span>} testId="range-to" value={e.to} onChange={(v) => set({ to: v })} unit={market.quote.code} />
       </div>
-      <div className="grid grid-cols-4 gap-1.5">
+      <div className="grid grid-cols-4 gap-1">
         {PRESETS.map((p) => (
           <button
             key={p}
+            type="button"
             disabled={!(fromN > 0)}
             onClick={() => set({ to: String(Number((fromN * (1 + (dir * p) / 100)).toFixed(4))) })}
-            className="rounded-lg border border-border py-1.5 text-[11px] font-medium tabular-nums text-mutedfg transition hover:border-primary/50 hover:text-white disabled:opacity-40"
+            className="rounded bg-secondary py-0.5 text-[10px] font-medium tabular-nums text-mutedfg transition hover:text-foreground disabled:opacity-40"
           >
             {dir > 0 ? "+" : "-"}
             {p}%
           </button>
         ))}
         <button
+          type="button"
           onClick={() => setForm({ ...form, from: null, to: null, split: null })}
-          className="rounded-lg border border-border py-1.5 text-[11px] font-medium text-mutedfg transition hover:border-primary/50 hover:text-white"
+          className="rounded bg-secondary py-0.5 text-[10px] font-medium text-mutedfg transition hover:text-foreground"
           title="Reset the range around the market"
         >
           Reset
         </button>
       </div>
       {form.mode === "band" ? (
-        <PriceField label="Split price (bids below, asks above)" testId="range-split" value={e.split} sub={`${pct(Number(e.split))}% vs mid`} quote={market.quote.code} onChange={(v) => set({ split: v })} />
+        <ExField
+          label="Split price (bids below, asks above)"
+          right={<span className="num text-[10px]">{pct(Number(e.split))}%</span>}
+          testId="range-split"
+          value={e.split}
+          onChange={(v) => set({ split: v })}
+          unit={market.quote.code}
+        />
       ) : null}
 
       {/* levels + shape */}
-      <div className="rounded-2xl bg-secondary px-4 py-3.5">
-        <div className="flex items-center justify-between text-sm text-mutedfg">
+      <div className="rounded-lg bg-secondary p-2.5">
+        <div className="flex items-center justify-between text-xs text-mutedfg">
           <span>Levels</span>
           <input
             data-testid="range-levels"
@@ -222,27 +225,25 @@ export function RangeTab({
               const n = Number(ev.target.value.replace(/\D/g, ""));
               set({ levels: Math.max(0, Math.min(MAX_LEVELS, n)) });
             }}
-            className="num w-12 rounded-md bg-accent px-2 py-0.5 text-right text-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="num w-12 rounded-md border border-border bg-background px-2 py-0.5 text-right text-xs text-foreground outline-none focus:border-primary"
           />
         </div>
-        <Slider className="mt-3" min={MIN_LEVELS} max={MAX_LEVELS} step={1} value={[Math.max(MIN_LEVELS, form.levels)]} onValueChange={(v) => set({ levels: v[0] })} aria-label="Levels" />
+        <Slider className="mt-2.5" min={MIN_LEVELS} max={MAX_LEVELS} step={1} value={[Math.max(MIN_LEVELS, form.levels)]} onValueChange={(v) => set({ levels: v[0] })} aria-label="Levels" />
         <div className="mt-1 flex justify-between text-[10px] text-mutedfg">
           <span>{MIN_LEVELS}</span>
           <span>{MAX_LEVELS}</span>
         </div>
-        <div className="mt-3 flex items-center justify-between text-sm text-mutedfg">
-          <span>Size distribution</span>
-        </div>
-        <Segmented value={form.shape} onChange={(shape) => set({ shape })} options={SHAPES} testId="range-shape" size="sm" className="mt-1.5" />
+        <div className="mt-2 text-xs text-mutedfg">Size distribution</div>
+        <Segmented value={form.shape} onChange={(shape) => set({ shape })} options={SHAPES} testId="range-shape" size="sm" className="mt-1 rounded-md bg-background [&>button]:rounded" />
         {/* live preview of the levels */}
-        <div className="mt-3" data-testid="range-preview">
-          <svg viewBox="0 0 300 70" preserveAspectRatio="none" className="h-[70px] w-full" role="img" aria-label="Size per level">
-            <line x1="0" x2="300" y1="66" y2="66" stroke="rgba(255,255,255,0.12)" />
+        <div className="mt-2" data-testid="range-preview">
+          <svg viewBox="0 0 300 56" preserveAspectRatio="none" className="h-[56px] w-full" role="img" aria-label="Size per level">
+            <line x1="0" x2="300" y1="53" y2="53" stroke="rgba(255,255,255,0.12)" />
             {levels.map((l, i) => {
               const n = levels.length;
               const w = 300 / n;
-              const h = Math.max(2, (Number(l.baseAmount) / maxBase) * 58);
-              return <rect key={l.index} x={i * w + w * 0.12} y={66 - h} width={w * 0.76} height={h} rx={1.5} fill={l.side === "ask" ? "rgba(235,54,90,0.7)" : "rgba(2,199,123,0.7)"} />;
+              const h = Math.max(2, (Number(l.baseAmount) / maxBase) * 46);
+              return <rect key={l.index} x={i * w + w * 0.12} y={53 - h} width={w * 0.76} height={h} rx={1.5} fill={l.side === "ask" ? "rgba(235,54,90,0.7)" : "rgba(2,199,123,0.7)"} />;
             })}
           </svg>
           <div className="num flex justify-between text-[10px] text-mutedfg">
@@ -254,9 +255,9 @@ export function RangeTab({
       </div>
 
       {/* summary */}
-      <div className="rounded-xl border border-border px-3 py-2.5 text-xs" data-testid="range-summary">
-        <div className="flex items-center justify-between pb-1">
-          <span className="label">Summary</span>
+      <SummaryBox testId="range-summary">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-mutedfg">Summary</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button type="button" aria-label="About the summary" className="text-mutedfg hover:text-foreground">
@@ -268,82 +269,57 @@ export function RangeTab({
             </TooltipContent>
           </Tooltip>
         </div>
-        <Row k="Average price" v={summary.avgPrice !== null ? `${fmt(summary.avgPrice, 4, 4)} ${market.quote.code}` : "-"} />
-        <Row k="Total size" v={`${fmt(fromStroops(summary.totalBase), 2)} ${market.base.code}`} />
-        <Row k="Offers" v={`${summary.offers}${summary.offers > 0 ? ` (${summary.asks} asks, ${summary.bids} bids)` : ""}`} testId="range-offers" />
-        {needBase > 0 ? <Row k="You sell" v={`${fmt(needBase, 2)} ${market.base.code}`} /> : null}
-        {needQuote > 0 ? <Row k="You sell" v={`${fmt(needQuote, 2)} ${market.quote.code}`} /> : null}
-        <Row k="XLM base reserve" v={`${fmt(summary.reserveXlm, 1)} XLM (0.5 per offer)`} />
-        <Row
-          k="Transactions"
-          v={`${Math.max(1, summary.txCount)} (${summary.txCount > 1 ? "one signature each" : "one signature"})`}
-        />
-      </div>
-      <p className="px-1 text-[11px] leading-relaxed text-mutedfg">
+        <SumRow k="Average price" v={summary.avgPrice !== null ? `${fmt(summary.avgPrice, 4, 4)} ${market.quote.code}` : "-"} />
+        <SumRow k="Total size" v={`${fmt(fromStroops(summary.totalBase), 2)} ${market.base.code}`} />
+        <SumRow k="Offers" v={`${summary.offers}${summary.offers > 0 ? ` (${summary.asks} asks, ${summary.bids} bids)` : ""}`} testId="range-offers" />
+        {needBase > 0 ? <SumRow k="You sell" v={`${fmt(needBase, 2)} ${market.base.code}`} /> : null}
+        {needQuote > 0 ? <SumRow k="You sell" v={`${fmt(needQuote, 2)} ${market.quote.code}`} /> : null}
+        <SumSep />
+        <SumRow k="XLM base reserve" v={`${fmt(summary.reserveXlm, 1)} XLM (0.5 / offer)`} />
+        <SumRow k="Transactions" v={`${Math.max(1, summary.txCount)} (${summary.txCount > 1 ? "one signature each" : "one signature"})`} />
+      </SummaryBox>
+      <p className="text-[10px] leading-relaxed text-mutedfg">
         Stellar allows at most {MAX_OPS_PER_TX} operations per transaction; this range uses {summary.offers}, so it goes in {Math.max(1, summary.txCount)} transaction{summary.txCount > 1 ? "s" : ""}.
         Your funds stay on your account (selling liabilities) until a level fills.
       </p>
       {receiptInOffers ? (
-        <p className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary" data-testid="range-yield-note">
-          Your {market.receipt.code} in these offers keeps earning yield: a resting offer never moves it out of your account, so the keeper&apos;s distribution still reaches it.
-        </p>
+        <div data-testid="range-yield-note">
+          <Warn>
+            Your {market.receipt.code} in these offers keeps earning yield: a resting offer never moves it out of your account, so the keeper&apos;s distribution still reaches it.
+          </Warn>
+        </div>
       ) : receiptProceeds ? (
-        <p className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-primary" data-testid="range-yield-note">
-          Proceeds arrive as {market.receipt.code} and start earning as soon as they land.
-        </p>
+        <div data-testid="range-yield-note">
+          <Warn>Proceeds arrive as {market.receipt.code} and start earning as soon as they land.</Warn>
+        </div>
       ) : null}
       {crossing > 0 ? (
-        <p className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 text-[11px] text-primary" data-testid="range-crosses">
-          {crossing} level{crossing === 1 ? "" : "s"} cross the book and would fill immediately (you act as taker). Move the range if you want to rest at these prices.
-        </p>
+        <div data-testid="range-crosses">
+          <Warn>
+            {crossing} level{crossing === 1 ? "" : "s"} cross the book and would fill immediately (you act as taker). Move the range if you want to rest at these prices.
+          </Warn>
+        </div>
       ) : null}
       {problems.map((p) => (
-        <p key={p} className="px-1 text-[11px] text-destructive">
+        <p key={p} className="text-[11px] text-destructive">
           {p}
         </p>
       ))}
-      {errors.length > 0 && wallet.address ? <p className="px-1 text-[11px] text-destructive">{errors[0]}</p> : null}
+      {errors.length > 0 && wallet.address ? <p className="text-[11px] text-destructive">{errors[0]}</p> : null}
 
       <TrustlineNotice asset={market.base} access={baseAccess} verb={form.mode === "sell" ? "sell" : "receive"} showOk />
       <TrustlineNotice asset={market.quote} access={quoteAccess} verb="hold" />
 
-      <Button className={cn("h-12 w-full text-base")} onClick={place} disabled={tx.running || blockedBy !== null} data-testid="range-submit">
-        {tx.running ? <Spinner className="size-5" /> : blockedBy ?? `Place ${summary.offers} offers in ${Math.max(1, summary.txCount)} tx`}
-      </Button>
+      <ActionButton
+        side={form.mode === "sell" ? "sell" : form.mode === "buy" ? "buy" : null}
+        onClick={place}
+        disabled={tx.running || blockedBy !== null}
+        blocked={blockedBy !== null && !tx.running}
+        testId="range-submit"
+      >
+        {tx.running ? <Spinner className="size-4" /> : blockedBy ?? `Place ${summary.offers} offers in ${Math.max(1, summary.txCount)} tx`}
+      </ActionButton>
       <TxStatus state={tx.state} network={network} onDismiss={tx.reset} />
     </div>
   );
 }
-
-function PriceField({ label, value, sub, quote, onChange, testId }: { label: string; value: string; sub: string; quote: string; onChange: (v: string) => void; testId: string }) {
-  return (
-    <div className="rounded-2xl bg-secondary px-3.5 py-3">
-      <div className="flex items-center justify-between text-xs text-mutedfg">
-        <span className="truncate">{label}</span>
-        <span className="num shrink-0 pl-2">{sub}</span>
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <input
-          data-testid={testId}
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => onChange(e.target.value.replace(/[^0-9.]/g, ""))}
-          className="w-full min-w-0 bg-transparent text-2xl font-medium tabular-nums outline-none"
-        />
-        <span className="shrink-0 text-xs text-mutedfg">{quote}</span>
-      </div>
-    </div>
-  );
-}
-
-function Row({ k, v, testId }: { k: string; v: string; testId?: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-0.5">
-      <span className="text-mutedfg">{k}</span>
-      <span className="num text-right" data-testid={testId}>
-        {v}
-      </span>
-    </div>
-  );
-}
-

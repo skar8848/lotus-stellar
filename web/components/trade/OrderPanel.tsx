@@ -4,10 +4,10 @@ import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Market } from "@/lib/markets";
 import type { RangeResult } from "@/lib/range";
 import type { OrderBook } from "@/lib/stellar";
+import { cn } from "@/lib/utils";
 import { LimitTab, type PricePick } from "./LimitTab";
 import { RangeTab } from "./RangeTab";
 import { SwapTab } from "./SwapTab";
@@ -21,8 +21,8 @@ function SlippageSettings({ slippage, onChange }: { slippage: number; onChange: 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="icon" className="size-9" aria-label="Settings" data-testid="slippage-settings">
-          <Settings className="size-4" />
+        <Button variant="ghost" size="icon" className="size-7 text-mutedfg" aria-label="Settings" data-testid="slippage-settings" title={`Slippage ${slippage}%`}>
+          <Settings className="size-3.5" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72">
@@ -50,10 +50,13 @@ function SlippageSettings({ slippage, onChange }: { slippage: number; onChange: 
   );
 }
 
-const triggerCls =
-  "h-auto flex-none rounded-none border-0 bg-transparent px-2 py-1 text-lg font-semibold text-mutedfg/60 shadow-none hover:text-mutedfg data-[state=active]:bg-transparent data-[state=active]:text-white data-[state=active]:shadow-none dark:data-[state=active]:bg-transparent dark:data-[state=active]:border-transparent";
+const TYPES: { value: OrderTab; label: string; title: string }[] = [
+  { value: "swap", label: "Swap", title: "Market order: one path payment through the books" },
+  { value: "limit", label: "Limit", title: "One resting offer at your price" },
+  { value: "range", label: "Range", title: "A ladder of offers across a price range, one transaction" },
+];
 
-/** Swap (taker) | Limit (one offer) | Range (pro range builder), like lotus-main's lite/pro order panel. */
+/** The order-entry column: Swap (taker) | Limit (one offer) | Range (SDEX ladder). Every action is signed in the wallet. */
 export function OrderPanel({
   market,
   book,
@@ -82,32 +85,36 @@ export function OrderPanel({
   onDone: () => void;
 }) {
   return (
-    <div className="card p-4 sm:p-5" data-testid="order-panel">
-      <Tabs value={tab} onValueChange={(v) => onTab(v as OrderTab)} className="gap-3">
-        <div className="flex items-center justify-between">
-          <TabsList className="h-auto gap-0 bg-transparent p-0">
-            <TabsTrigger value="swap" className={triggerCls} data-testid="tab-swap">
-              Swap
-            </TabsTrigger>
-            <TabsTrigger value="limit" className={triggerCls} data-testid="tab-limit">
-              Limit
-            </TabsTrigger>
-            <TabsTrigger value="range" className={triggerCls} data-testid="tab-range">
-              Range
-            </TabsTrigger>
-          </TabsList>
-          <SlippageSettings slippage={slippage} onChange={onSlippage} />
-        </div>
-        <TabsContent value="swap">
-          <SwapTab key={market.id} market={market} slippageBps={Math.round(slippage * 100)} onDone={onDone} />
-        </TabsContent>
-        <TabsContent value="limit">
-          <LimitTab key={market.id} market={market} book={book} pick={pick} onDone={onDone} />
-        </TabsContent>
-        <TabsContent value="range">
-          <RangeTab market={market} book={book} form={form} setForm={setForm} result={rangeResult} refPrice={refPrice} onDone={onDone} />
-        </TabsContent>
-      </Tabs>
+    <div className="flex flex-col" data-testid="order-panel">
+      <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-2.5">
+        <h3 className="text-xs font-semibold">Place order</h3>
+        <SlippageSettings slippage={slippage} onChange={onSlippage} />
+      </div>
+      <div className="flex gap-1 px-3 pb-1" role="tablist">
+        {TYPES.map((t) => (
+          <button
+            key={t.value}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.value}
+            data-state={tab === t.value ? "active" : "inactive"}
+            title={t.title}
+            onClick={() => onTab(t.value)}
+            data-testid={`tab-${t.value}`}
+            className={cn(
+              "rounded-md border px-3 py-1 text-xs font-medium transition-colors",
+              tab === t.value ? "border-border bg-secondary text-foreground" : "border-transparent text-mutedfg hover:text-foreground",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="px-3 pb-4 pt-2">
+        {tab === "swap" ? <SwapTab key={market.id} market={market} slippageBps={Math.round(slippage * 100)} onDone={onDone} /> : null}
+        {tab === "limit" ? <LimitTab key={market.id} market={market} book={book} pick={pick} onDone={onDone} /> : null}
+        {tab === "range" ? <RangeTab market={market} book={book} form={form} setForm={setForm} result={rangeResult} refPrice={refPrice} onDone={onDone} /> : null}
+      </div>
     </div>
   );
 }

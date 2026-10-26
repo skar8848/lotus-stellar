@@ -18,7 +18,7 @@ npm run dev            # http://localhost:3000
 npm run build          # production build (must pass)
 npm start
 npm run lint
-npm run test:unit      # range builder, pool grid, New order routing (plain node, no browser)
+npm run test:unit      # range builder, pool grid, New order routing, live yield rate, faucet (plain node, no browser)
 ```
 
 Node 20+ (tested on Node 25). If another `next dev` already holds `web/.next` (Next takes an exclusive lock
@@ -29,18 +29,24 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 | route | what |
 | --- | --- |
 | `/` | Landing: hero with the ASCII lotus (lazy loaded WebGL, black fallback), how it works, why Stellar, footer |
-| `/trade` | The SDEX front. Market selector (`?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC), candles + depth panel, order book, cumulative depth, recent trades, order panel (**Swap** / **Limit** / **Range**), open offers with Cancel |
-| `/pools` | **Lotus pool** tab: **New order** panel (one directional range limit order, waits in the Lotus pool or on the SDEX, yield off or on), instance picker, depth by price bin, my positions (claim / remove), pool swap with a venue comparison against the SDEX. **Vault & receipt (lUSDC)** tab (`?tab=vault`): strategy cards, deposit / redeem, yield explainer, contract events |
-| `/earn` | Redirect to `/pools?tab=vault` (keeps `?strategy=`) |
-| `/portfolio` | Balances (available vs in offers), open offers, receipts per vault, pool positions, recent activity, USDC-equivalent summary |
+| `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), chart (candles + depth panel, or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit** / **Range**), bottom tabs (open orders with Cancel, trade history, balances) |
+| `/pools` | **New position** (Uniswap-style add-liquidity flow, see below): pair + side, range on the draggable chart over live depth, amount, then **Choose your strategy** (Lotus pool / + Blend yield / Stellar DEX / + Blend yield) and a review modal. Below it, **Your positions** across the four strategies (claim / remove / cancel, explorer links). Header: **Swap on the pool** (dialog with the venue comparison) and **Advanced: two-way position** (`?pool=lbond-usdc-twoway`, the previous builder). `?tab=vault` redirects to `/portfolio#receipts` |
+| `/earn` | Redirect to `/pools` (old vault links with `?strategy=` go to `/portfolio#receipts`) |
+| `/portfolio` | Balances (available vs in offers), open offers, receipts per vault with **Redeem lUSDCb → USDC** (`#receipts`), pool positions, recent activity, USDC-equivalent summary |
 | `/app` | Redirect to `/trade` |
 | `/api/config` | The merged deployment config as JSON (public keys only), read at request time |
+| `/faucet` | Testnet faucet: Friendbot, add the trustlines (one tx), claim LBOND + USDC + the active receipt. See [Faucet](#faucet-testnet) |
+| `/api/faucet` | `GET`: faucet status (public info). `POST {address}`: server-side funding of one address |
 
 Vocabulary: the **Lotus pool** is the `lotus_pool` range pool (directional liquidity on a price grid). The
 **Lotus vault** is the `lotus_vault` wrapper (USDC to a DeFindex vault, receipt token `lUSDC`, a classic asset
 that trades on the SDEX). Never call the vault a pool.
 
 ### /trade
+
+Layout: desktop fills the viewport under the nav (market bar, chart | book + trades, resizable bottom panel, order entry in a
+full-height right column); below 1024px everything stacks. Every action is signed in the wallet (no session keys, no auto-sign).
+Clicking a book level fills the Limit price. Swap and Limit have a Buy / Sell toggle and a % of available balance slider.
 
 - **Swap**: pay asset to receive asset with one `pathPaymentStrictSend`, quoted from Horizon `/paths/strict-send`
   (route, effective price, min received with slippage). `USDC > lUSDC > LBOND` is one transaction. Shows the trustline
@@ -57,26 +63,49 @@ that trades on the SDEX). Never call the vault a pool.
   the account; when the receipt is in the offers the page says it keeps earning.
 - **Open offers**: from Horizon `/accounts/{id}/offers`, Cancel = `manageSellOffer` with amount 0 and the offer id.
 
-### New order (/pools, main panel)
+### /pools: New position
 
-One flow to create a **range limit order**, directional only: **Ask** sells LBOND as the price rises, **Bid** waits
-with USDC to buy LBOND as the price falls (no classic two-way LP here). The range is built with the pool grid
-(start / end price snapped to bins, weight shape, live preview). Then two controls, chosen at creation only (there
-is no "move" later):
+One page, laid out like the Uniswap v3/v4 "New position" wizard of the previous front (lotus-main, git `a938fc3`,
+`web/app/pro1/page.tsx`): breadcrumb, title with **Reset**, a stepper card on the left, the step card on the right.
+The receipt / vault is not a page of its own any more: depositing USDC for the receipt is how **Stellar DEX + Blend
+yield** works, and held receipts are redeemed from /portfolio. Files: `components/pools/NewPosition.tsx` (wizard),
+`LiquidityRangeChart.tsx` (chart), `StrategyCards.tsx`, `ReviewDialog.tsx`, `useOrder.ts` (evaluation of the four
+destinations), `YourPositions.tsx` + `positionsModel.ts`, `useBlendApr.ts` + `lib/yieldRate.ts`.
 
-| | Earn yield: off | Earn yield: on |
+1. **Select pair and side**: LBOND / USDC, and **Sell LBOND** (Ask: sold as the price rises) or **Buy LBOND with
+   USDC** (Bid: buys as the price falls). Directional range limit orders only; the classic two-way LP is the
+   "Advanced: two-way position" link in the header.
+2. **Set price range and deposit**: the lotus-main liquidity range chart (price line of the SDEX LBOND/USDC trades,
+   falling back to LBOND/receipt; timeframes 1H / 1D / 1W / 1M) flowing into a depth histogram of **every live pool
+   instance's bins plus the SDEX LBOND/USDC and LBOND/receipt books**, snapped to the same grid, in LBOND-equivalent.
+   Draggable **min / max** handles (snap to bins), the order being built in pink, current price dashed. Range presets
+   (Ask: just above, sell the rip, ladder, wide; Bid: just below, buy the dip, ladder, wide), Min / Max price fields
+   with **- / +** steppers (one bin per click), weight (even / front / back), deposit with balance.
+3. **Choose your strategy**: four cards, the 2x2 of `lib/orderRoute.ts`, each with a one-line explanation, the
+   expected yield, the number of signatures and, when unavailable, why (curator rule, no instance, > 50 SDEX levels).
+4. **Review** (modal): the one-line summary, details (deposit, range, bins / offers, average price, receive if filled,
+   yield, pool + fee or XLM reserve, trustlines added, signatures, reference price), then **Sign**. The two-transaction
+   case and the "Post the offers again" retry live in the modal.
+
+| | Yield off | Blend yield |
 | --- | --- | --- |
-| **Waits in: Lotus pool** | `add_position(Directional)` on the first pool instance without a vault (`lbond-usdc-idle`), 1 signature | `add_position(Directional)` on the first instance with a vault (`lbond-usdc-defindex`, USDC leg in DeFindex/Blend), 1 signature |
-| **Waits in: SDEX** | one classic tx, one `manageSellOffer` per bin on LBOND/USDC, 1 signature | quoted in the active receipt (`testnet.contract.json` `receipt`): Ask = one classic tx of offers selling LBOND for the receipt; Bid = `lotus_vault.deposit(USDC)` then the classic ladder buying LBOND with the receipt, **2 signatures** |
+| **Lotus pool** | `add_position(Directional)` on the first pool instance without a vault (`lbond-usdc-idle`), 1 signature | `add_position(Directional)` on the first instance with a vault (`lbond-usdc-defindex`, USDC leg in DeFindex/Blend), 1 signature |
+| **Stellar DEX** | one classic tx, one `manageSellOffer` per bin on LBOND/USDC, 1 signature | quoted in the active receipt (`testnet.contract.json` `receipt`): Ask = one classic tx of offers selling LBOND for the receipt; Bid = `lotus_vault.deposit(USDC)` then the classic ladder buying LBOND with the receipt, **2 signatures** |
 
-- Contract ids come from `testnet.pool.json` / `/api/config` (instance order decides which one is "idle" and which
-  one "vault"); the receipt code and issuer from `testnet.contract.json`. Other instances (the separate two-way
-  pool) keep the old builder, reachable from the link under the panel (`?pool=lbond-usdc-twoway`). Instances with
-  `status: "retired"` and the `retired_pools[]` array are hidden everywhere except /portfolio, where an owner can
-  still claim / remove.
-- Before signing the panel shows one line, e.g. *Sell 100 LBOND from 1.000 to 1.005 · waits in the Lotus pool ·
-  earns Blend yield on proceeds · 1 signature*, plus the details (average price, bins, receive if filled, XLM
-  reserve, trustlines added, reference price).
+- **Expected yield**: the Blend USDC supply APR, read **live** by `useBlendApr` (`get_reserve(USDC)` on the Blend
+  pool every 15 s, annualized `b_rate` growth between the first read of the session and the latest, `lib/yieldRate.ts`,
+  tested against the `observed_apr` window of `testnet.contract.json`). Until two reads 10 s apart exist, the card
+  shows the last figure measured by the deployment team (`observed_apr.window_b.lotus_net_apr_pct`). Always labelled
+  "observed on testnet, not a forecast"; BLND emissions are not counted. The DeFindex vault fee is 0, so the gross
+  Blend rate is what positions net. Both yield strategies use the same DeFindex vault.
+- **Your positions** (`YourPositions.tsx`, lotus-main dashboard table + filters + empty state): pool positions of
+  every instance (incl. retired ones, two-way rows tagged "Two-way LP (advanced)") via the /portfolio loader, and SDEX
+  ladders: the account's offers selling LBOND for USDC or a receipt, or the reverse, grouped per (pair, side) into
+  one row. Pool rows: status, fill bar, remaining, claimable proceeds + fees, **Claim** / **Remove**. SDEX rows:
+  remaining, **Cancel all** (one classic tx, chunked above 100 offers). Each row expands to its pool / DeFindex
+  contract or per-offer explorer links. One status line for the whole table.
+- **Swap on the pool**: dialog with an instance picker (idle / vault-backed), `PoolSwap` and the venue comparison.
+
 - **Ladder mapping** (`lib/orderRoute.ts`, tested in `tests/order-route.test.mts`): each bin is one SDEX offer at
   `price_at(bin)` with the bin's own amount (same `planPosition` weights as the pool). Ask = `manageSellOffer(LBOND
   -> quote, price p/1e7)`, Bid = `manageSellOffer(quote -> LBOND, price 1e7/p)`. `p` is an integer number of
@@ -94,20 +123,20 @@ is no "move" later):
   sent and awaited, and the offers are sent **only if the deposit succeeded**; otherwise the signed offers are
   dropped (a deposit included but failed consumes s+1, so they would be valid: they never leave the function) and
   the UI says nothing moved. A footprint race on the deposit (`ExceededLimit`, `lib/txErrors.ts`) rebuilds and
-  re-signs both (2 times). Deposit ok but offers failed: the UI says you hold the receipt (redeemable at par on the
-  Vault tab) and offers **Post the offers again** (one classic tx, fresh sequence). The atomic peg-book
+  re-signs both (2 times). Deposit ok but offers failed: the modal says you hold the receipt (redeemable at par in
+  /portfolio) and offers **Post the offers again** (one classic tx, fresh sequence). The atomic peg-book
   alternative (pathPaymentStrictReceive USDC -> receipt + offers in one classic tx) is not implemented.
-- **Curator rule** (UI only, `PROXIMITY_MIN_BINS = 10` in `lib/orderRoute.ts`): for Bid + Pool, yield "On" is
-  disabled when the top bin of the range is less than 10 bins below the reference price ("Too close to the price:
+- **Curator rule** (UI only, `PROXIMITY_MIN_BINS = 10` in `lib/orderRoute.ts`): for a Bid, the **Lotus pool + Blend
+  yield** card is disabled when the top bin of the range is less than 10 bins below the reference price ("Too close to the price:
   your USDC would be recalled from the vault by every trade, little yield, more failures"). Reference = mid of the
   SDEX LBOND/receipt book, else LBOND/USDC, else the pool's own mid (best directional bins), else 1.0. Ask and SDEX
-  are never blocked (tooltip: Ask yield is on proceeds that wait in the vault; a receipt in an SDEX offer keeps
-  earning).
-- /trade **Range** links to this panel; it stays the free-form SDEX ladder (any levels, two-sided bands).
-- /portfolio lists all four kinds: pool positions per instance (claim / remove), and SDEX offers on LBOND/USDC and
-  on LBOND/receipt (tagged "earns" / "proceeds earn" when quoted in the receipt), each with explorer links.
+  are never blocked (the card explains it: Ask yield is on proceeds that wait in the vault; a receipt in an SDEX offer
+  keeps earning, so the Stellar DEX + Blend yield card stays open). The "Buy the dip" preset keeps every card open.
+- /trade **Range** links to /pools; it stays the free-form SDEX ladder (any levels, two-sided bands).
+- /portfolio also lists all four kinds: pool positions per instance (claim / remove), and SDEX offers on LBOND/USDC and
+  on LBOND/receipt, each with explorer links, plus the receipts with their **Redeem** action.
 
-### /pools
+### Lotus pool adapter
 
 `lib/pool.ts` is a thin adapter over the `lotus_pool` ABI (`docs/pool-abi.md`): argument encoders, result
 decoders, a live client (Soroban RPC) and a **local simulation** client. Until `deployments/testnet.pool.json`
@@ -127,10 +156,40 @@ comes back, but it can end up holding mostly the other asset; directional positi
 and on /portfolio a two-way row shows both holdings (`inventory` = BASE held now, `pending_proceeds` = QUOTE held now),
 the traded volume and the fees; Claim pays fees only, Remove pays both reserves plus fees.
 
-Position builder: side **Ask** (sell LBOND as the price rises) or **Bid** (buy LBOND as the price falls), price
+Position builder (Advanced: two-way position, `?pool=<instance>`): side **Ask** (sell LBOND as the price rises) or **Bid** (buy LBOND as the price falls), price
 range converted to grid bins (max 64 bins per position, 0.001 minimum per bin, as in the contract), weight shape,
 amount, mode **Directional** (default) or **Two-way LP** (disabled unless the pool reports `supports_two_way`),
 summary with average price, bins, fee tier and where the USDC leg is parked.
+
+## Faucet (testnet)
+
+`/faucet` gets a judge with a fresh wallet from zero to a funded account in about a minute. A thin "Get test tokens"
+line also appears under the nav on every app page while the connected wallet is not on testnet yet or lacks one of
+the trustlines (`components/faucet/FaucetHint.tsx`, hidden on `/faucet`).
+
+1. **Fund**: when the account does not exist, a Friendbot button (`friendbot.stellar.org`, 10,000 test XLM).
+2. **Add trustlines**: one classic transaction with every missing `changeTrust`, signed by the wallet. Each row shows
+   code, issuer (copy button), `CODE:ISSUER` (copy button), explorer link and the trustline state.
+3. **Claim test tokens**: `POST /api/faucet`. The server authorizes the LBOND trustline (`setTrustLineFlags authorized`,
+   LBOND is AUTH_REQUIRED) and sends **500 LBOND** from the LBOND issuer, **200 USDC** (Blend testnet) from the
+   `blocked_taker` demo account and **50** of the active receipt (`testnet.contract.json` `receipt`, e.g. lUSDCb) from
+   `maker`. Each asset is its own transaction; the page lists the hash per asset with explorer links.
+
+Assets come from the config (`lib/faucet.ts` `faucetAssets`: `underlying`, `rwa`, `receipt`), never from constants.
+
+**Keys (server only, `lib/faucet-server.ts`, imported only by `app/api/faucet/route.ts`)**: read at request time with
+`fs` from `deployments/testnet.secrets.json` (keys `rwa_issuer`, `blocked_taker`, `maker`) when present, else from
+env vars `FAUCET_RWA_ISSUER_SECRET`, `FAUCET_USDC_SECRET`, `FAUCET_RECEIPT_SECRET` (for a hosted deploy). Never
+`NEXT_PUBLIC_*`, never logged, never returned; error messages are scrubbed of anything shaped like a secret. The LBOND
+key must be the LBOND issuer (checked). A production build made without the dev signer contains no `S...` key in
+`.next/static` (checked by scanning the build output for the strkey pattern and for the exact secret values).
+
+**Guards**: network passphrase must be `Test SDF Network ; September 2015` (403 otherwise); address validated with
+`StrKey.isValidEd25519PublicKey`; account must exist (else "fund it with Friendbot first"); one claim per address and
+asset, kept in memory (resets on a server restart) and backed by a skip when the address already holds at least the
+faucet amount; one claim at a time per address; 6 requests per 10 min per IP (`x-forwarded-for`) and 120 per hour
+overall. A source account without enough *available* balance (balance minus open-offer liabilities) gives "the faucet
+is empty for X, ask the team to refill it"; `op_underfunded` / `tx_insufficient_balance` are explained the same way.
 
 ## Config
 
@@ -144,13 +203,14 @@ At request time `lib/config.ts` reads, in this order, for each file:
 | --- | --- |
 | `testnet.contract.json` | network, Horizon / RPC urls, the active `lotus_vault` contract, USDC and receipt assets |
 | `testnet.classic.json` | the LBOND asset and the named demo accounts |
-| `testnet.strategies.json` | Lotus vault instances (cards on the Vault tab, one market pair per receipt). Absent: ONE strategy is derived from `testnet.contract.json` and marked idle |
+| `testnet.strategies.json` | Lotus vault instances (receipt rows on /portfolio, one market pair per receipt, the yield strategy of /pools). Absent: ONE strategy is derived from `testnet.contract.json` and marked idle |
 | `testnet.pool.json` | Lotus pool instances (shape in `docs/pool-abi.md`). Absent: one local simulation instance |
 
 The root layout re-reads them on every request and `/api/config` is polled every 20 s by the client, so files
 that appear while the app is running show up without a rebuild. Missing values render as "-", never as invented
-numbers. No APY is shown anywhere: the testnet vault `usdc-defindex-idle` keeps funds idle (no Blend interest),
-and yield figures would need two real snapshots.
+numbers. The only APY shown is the Blend supply rate on the /pools strategy cards, measured live from two on-chain
+reads (or, until then, the `observed_apr` written by the deployment team), labelled as observed on testnet, not a
+forecast. The v1 vault `usdc-defindex-idle` keeps funds idle (no Blend interest) and is never credited with a yield.
 
 ## Dev signer (testnet only)
 
@@ -176,7 +236,8 @@ node e2e/setup-env.mjs                          # once: dev keys into .env.local
 node e2e/run-flows.mjs                          # SDEX + vault flows on testnet, verified on Horizon
 node e2e/pool-flows.mjs                         # directional pool flows (POOL=<instance id> to pick one; live contract or local simulation)
 POOL=lbond-usdc-twoway TWOWAY=1 node e2e/pool-flows.mjs   # two-way round trip: add, swap through, swap back, claim fees, remove
-node e2e/order-flows.mjs                        # New order: Bid on all 4 destinations + Ask SDEX/receipt (ASKS=1: all Asks), proximity rule, portfolio, cleanup
+node e2e/position-flows.mjs                     # /pools New position: Ask + Bid on all 4 strategies, Your positions, curator rule, cleanup (remove / cancel), redeem from /portfolio
+node e2e/order-flows.mjs                        # previous New order panel (selectors predate the /pools redesign; kept for reference)
 node e2e/portfolio-check.mjs                    # portfolio UI checks (no transactions)
 node e2e/shots.mjs --path /trade --name trade --wallet maker --full   # screenshot helper
 ```
@@ -189,22 +250,26 @@ The browser tests use Playwright with the locally cached Chromium (`e2e/browser.
 
 ```
 web/
-  app/              layout, landing, trade, pools, earn (redirect), portfolio, app (redirect), api/config
+  app/              layout, landing, trade, pools, earn (redirect), portfolio, faucet, app (redirect), api/config, api/faucet
   app/fonts/        Inter variable (inter-ui 4.1.1 latin subset, SIL OFL) for the cv05 "l with a tail"
   components/ui/    shadcn primitives copied from lotus-main
   components/       Nav, SiteChrome, common (links, tx status, token icon, inputs), VenueComparison
   components/trade/ chart (lightweight-charts), book panels, swap / limit / range tabs, open offers
-  components/pools/ pool page, depth chart, position builder, positions, pool swap
-  components/vault/ Vault & receipt tab
-  components/portfolio/, components/landing/, components/wallet/
+  components/pools/ New position wizard, range chart, strategy cards, review modal, Your positions, pool swap,
+                    two-way builder (advanced)
+  components/vault/ StrategyCard (status badge, still used by /portfolio receipts)
+  components/portfolio/, components/landing/, components/wallet/, components/faucet/ (page + nav hint)
   lib/stellar.ts    assets, amounts, Horizon fetchers, RPC views, tx flows (classic, chunked, Soroban)
   lib/range.ts      SDEX range builder math (BigInt)
   lib/poolGrid.ts   pool price grid + position planning (BigInt)
   lib/orderRoute.ts New order routing: bins -> SDEX ladder, proximity rule, signatures, summary line (pure)
   lib/orderTx.ts    New order execution per destination (pool, SDEX, deposit + SDEX)
+  lib/yieldRate.ts  live Blend supply APR from two b_rate reads (pure, tested)
   lib/pool.ts       lotus_pool adapter: live client + local simulation
   lib/config*.ts    deployment config (server loader + shared types + client context)
   lib/explorer.ts   stellar.expert links (tx, account, asset, contract, offer, liquidity-pool)
+  lib/faucet.ts     faucet assets from config, trustline state, claim plan, rate limiter (pure, tested)
+  lib/faucet-server.ts  faucet keys + funding txs (server only)
   e2e/, tests/      Playwright scripts and plain-node unit tests
 ```
 

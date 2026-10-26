@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { useAccount } from "@/lib/account";
 import { useConfig, useNet } from "@/lib/config-context";
 import { divRound, SCALE, tryStroops, fromStroops } from "@/lib/amount";
@@ -10,12 +9,15 @@ import { useTx } from "@/lib/hooks";
 import type { Market } from "@/lib/markets";
 import { fmt, manageSellOfferOp, priceArg, submitClassic, type OrderBook } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import { AssetField, Segmented, Spinner, TxStatus } from "@/components/common";
+import { Spinner, TxStatus } from "@/components/common";
 import { TrustlineNotice, useAssetAccess } from "./access";
+import { ActionButton, ExField, PctSlider, SideToggle, SummaryBox, SumRow, SumSep, Warn, type Side } from "./form";
 
 export type PricePick = { price: string; nonce: number } | null;
 
-/** One manageSellOffer: sell the base (ask) or buy the base by selling the quote (bid). */
+const floorStroops = (n: number): bigint => (Number.isFinite(n) && n > 0 ? BigInt(Math.floor(n * 1e7)) : 0n);
+
+/** One manageSellOffer: sell the base (ask) or buy the base by selling the quote (bid). Signed in the wallet. */
 export function LimitTab({ market, book, pick, onDone }: { market: Market; book: OrderBook | null; pick: PricePick; onDone: () => void }) {
   const { network } = useConfig();
   const net = useNet();
@@ -23,7 +25,7 @@ export function LimitTab({ market, book, pick, onDone }: { market: Market; book:
   const acct = useAccount();
   const tx = useTx("Limit order");
 
-  const [side, setSide] = useState<"buy" | "sell">("sell");
+  const [side, setSide] = useState<Side>("buy");
   const [price, setPrice] = useState("");
   const [amount, setAmount] = useState("");
   // adopt a price clicked in the order book (adjust state while rendering, no effect needed)
@@ -48,6 +50,20 @@ export function LimitTab({ market, book, pick, onDone }: { market: Market; book:
   const sellAmount = side === "sell" ? a : quoteTotal;
   const insufficient = valid && sellAccess.available !== null && sellAmount !== null && Number(fromStroops(sellAmount)) > sellAccess.available + 1e-9;
   const crosses = valid && Number(price) > 0 && (side === "sell" ? bid !== null && Number(price) <= bid : ask !== null && Number(price) >= ask);
+
+  // max base size: the free base (ask) or the free quote at this price (bid), in stroops
+  const maxBase: bigint | null = (() => {
+    if (sellAccess.available === null) return null;
+    if (side === "sell") return floorStroops(sellAccess.available);
+    if (p === null || p <= 0n) return null;
+    return (floorStroops(sellAccess.available) * SCALE) / p;
+  })();
+  const pct = maxBase && maxBase > 0n && a !== null ? Number((a * 10000n) / maxBase) / 100 : 0;
+  const setPct = (v: number) => {
+    if (!maxBase || maxBase <= 0n) return;
+    const s = (maxBase * BigInt(Math.round(v * 100))) / 10000n;
+    setAmount(s > 0n ? fromStroops(s) : "");
+  };
 
   const blockedBy = !wallet.address
     ? "Connect a wallet"
@@ -78,77 +94,98 @@ export function LimitTab({ market, book, pick, onDone }: { market: Market; book:
 
   const quick = useMemo(
     () => [
-      { label: "Best bid", v: bid },
+      { label: "Bid", v: bid },
       { label: "Mid", v: mid },
-      { label: "Best ask", v: ask },
+      { label: "Ask", v: ask },
     ],
     [bid, mid, ask],
   );
 
+  const receiptQuoted = market.quote.code === market.receipt.code && market.kind !== "cash";
+
   return (
-    <div className="space-y-1.5" data-testid="limit-tab">
-      <Segmented
-        value={side}
-        onChange={setSide}
-        testId="limit-side"
-        options={[
-          { value: "buy", label: `Buy ${market.base.code}` },
-          { value: "sell", label: `Sell ${market.base.code}` },
-        ]}
-      />
-      <div className="rounded-2xl bg-secondary px-4 py-3.5">
-        <div className="flex items-center justify-between text-sm text-mutedfg">
-          <span>
-            Price ({market.quote.code} per {market.base.code})
-          </span>
+    <div className="space-y-2.5" data-testid="limit-tab">
+      <SideToggle value={side} onChange={setSide} testId="limit-side" buyLabel={`Buy ${market.base.code}`} sellLabel={`Sell ${market.base.code}`} />
+
+      <ExField
+        label={`Price (${market.quote.code} per ${market.base.code})`}
+        testId="limit-price"
+        value={price}
+        onChange={setPrice}
+        placeholder={mid !== null ? String(Number(mid.toFixed(4))) : "0.0000"}
+        unit={market.quote.code}
+        right={
           <span className="flex gap-1">
             {quick.map((q) => (
               <button
                 key={q.label}
+                type="button"
                 disabled={q.v === null}
                 onClick={() => q.v !== null && setPrice(String(Number(q.v.toFixed(7))))}
-                className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-mutedfg transition hover:text-white disabled:opacity-40"
+                className="rounded bg-secondary px-1.5 py-px text-[10px] font-medium text-mutedfg transition hover:text-foreground disabled:opacity-40"
               >
                 {q.label}
               </button>
             ))}
           </span>
-        </div>
-        <input
-          data-testid="limit-price"
-          inputMode="decimal"
-          value={price}
-          placeholder={mid !== null ? String(Number(mid.toFixed(4))) : "0.0000"}
-          onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))}
-          className="mt-1 w-full min-w-0 bg-transparent text-3xl font-medium tabular-nums outline-none placeholder:text-mutedfg/50 sm:text-4xl"
-        />
-      </div>
-      <AssetField
-        label={`Amount (${market.base.code})`}
-        testId="limit-amount"
-        value={amount}
-        onChange={setAmount}
-        asset={market.base}
-        balance={sellAccess.available !== null && side === "sell" ? fmt(sellAccess.available, 2) : undefined}
-        hint={quoteTotal !== null ? `= ${fmt(fromStroops(quoteTotal), 4)} ${market.quote.code}` : undefined}
+        }
       />
-      {side === "buy" ? (
-        <p className="px-1 text-[11px] text-mutedfg">
-          A bid sells {market.quote.code} for {market.base.code}. Free {market.quote.code}: <span className="num">{quoteAccess.available !== null ? fmt(quoteAccess.available, 2) : "-"}</span>
-          {market.quote.code === market.receipt.code ? ". The receipt in your bid keeps earning while it waits." : "."}
-        </p>
-      ) : null}
+
+      <div>
+        <ExField
+          label={`Size (${market.base.code})`}
+          testId="limit-amount"
+          value={amount}
+          onChange={setAmount}
+          placeholder="0"
+          unit={market.base.code}
+          right={
+            maxBase !== null && maxBase > 0n ? (
+              <span className="text-[10px]">
+                Max: <span className="num text-foreground">{fmt(fromStroops(maxBase), 2)}</span>
+              </span>
+            ) : null
+          }
+        />
+        <PctSlider pct={pct} onPct={setPct} disabled={!wallet.address || !maxBase || maxBase <= 0n} />
+      </div>
+
+      <SummaryBox testId="limit-summary">
+        {wallet.address ? (
+          <SumRow k="Available" v={sellAccess.available !== null ? `${fmt(sellAccess.available, 2)} ${sellAsset.code}` : "-"} />
+        ) : null}
+        <SumRow k="Order value" v={quoteTotal !== null ? `${fmt(fromStroops(quoteTotal), 4)} ${market.quote.code}` : "--"} />
+        <SumRow k={side === "sell" ? "You sell" : "You pay"} v={sellAmount !== null && valid ? `${fmt(fromStroops(sellAmount), 4)} ${sellAsset.code}` : "--"} />
+        <SumSep />
+        <SumRow k="Operation" v="manageSellOffer" />
+        <SumRow k="Reserve" v="0.5 XLM per offer" title="Each open offer is an account subentry and locks 0.5 XLM of base reserve until it is filled or cancelled" />
+        <SumRow k="Network fee" v="0.0001 XLM" />
+        {receiptQuoted ? (
+          <SumRow
+            k="Yield"
+            className="text-primary"
+            v={side === "buy" ? `${market.quote.code} keeps earning` : `proceeds earn in ${market.quote.code}`}
+            title={`${market.quote.code} is the Lotus receipt: an offer only sets a selling liability, so the receipt stays in your account and keeps earning`}
+          />
+        ) : null}
+      </SummaryBox>
+
       {crosses ? (
-        <p className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-2 text-[11px] text-primary" data-testid="limit-crosses">
-          This price crosses the book: the order fills immediately against the best {side === "sell" ? "bid" : "ask"} (you are the taker) and only the rest rests.
-        </p>
+        <div data-testid="limit-crosses">
+          <Warn>
+            This price crosses the book: it fills at once against the best {side === "sell" ? "bid" : "ask"} (you are the taker) and only the rest rests.
+          </Warn>
+        </div>
       ) : null}
+
       <TrustlineNotice asset={market.base} access={baseAccess} verb={side === "buy" ? "receive" : "sell"} showOk />
-      <Button className="mt-2 h-12 w-full text-base" onClick={submit} disabled={tx.running || blockedBy !== null} data-testid="limit-submit">
-        {tx.running ? <Spinner className="size-5" /> : blockedBy ?? (side === "sell" ? `Place ask` : `Place bid`)}
-      </Button>
-      <p className="text-[11px] leading-relaxed text-mutedfg">
-        One manageSellOffer. The offer only sets a selling liability: the {sellAsset.code} stays in your account until a taker fills it.
+      {quoteAccess.state === "no-trustline" || quoteAccess.state === "unauthorized" ? <TrustlineNotice asset={market.quote} access={quoteAccess} verb={side === "buy" ? "pay with" : "receive"} /> : null}
+
+      <ActionButton side={side} onClick={submit} disabled={tx.running || blockedBy !== null} blocked={blockedBy !== null && !tx.running} testId="limit-submit">
+        {tx.running ? <Spinner className="size-4" /> : blockedBy ?? `${side === "buy" ? "Buy" : "Sell"} ${market.base.code}`}
+      </ActionButton>
+      <p className="text-[10px] leading-relaxed text-mutedfg">
+        One offer, one wallet signature. The offer only sets a selling liability: the {sellAsset.code} stays in your account until a taker fills it.
       </p>
       <TxStatus state={tx.state} network={network} onDismiss={tx.reset} />
     </div>

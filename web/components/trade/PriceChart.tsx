@@ -71,11 +71,12 @@ export function PriceChart({
     onChangeRef.current = onRangeChange;
   });
 
-  // create the chart ONCE
+  // create the chart ONCE (the height follows the prop through applyOptions, see below)
+  const initialHeight = useRef(height);
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
-      height,
+      height: initialHeight.current,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#8898a8",
@@ -171,6 +172,10 @@ export function PriceChart({
       lineRef.current = null;
       primitiveRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    chartRef.current?.applyOptions({ height });
   }, [height]);
 
   // fit the data into the LEFT (1 - PANEL_FRAC) of the pane, reserving the right share for the depth panel.

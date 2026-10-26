@@ -54,12 +54,15 @@ export function OpenOffers({
   market,
   offers,
   onChanged,
+  bare = false,
 }: {
   markets: Market[];
   market: Market | null;
   /** polled by the page so every action can refresh it */
   offers: Polled<HorizonOffer[]>;
   onChanged: () => void;
+  /** exchange layout (/trade bottom panel): no card, flat table, toolbar inline */
+  bare?: boolean;
 }) {
   const { network } = useConfig();
   const net = useNet();
@@ -96,21 +99,21 @@ export function OpenOffers({
       }
     });
 
-  return (
-    <Panel
-      title="Open offers"
-      subtitle="Your resting orders on the SDEX. Cancelling frees the balance they lock."
-      right={
-        <div className="flex items-center gap-2">
-          <Segmented value={scope} onChange={setScope} size="sm" className="w-44" options={[{ value: "market", label: market?.label ?? "Market" }, { value: "all", label: "All" }]} />
-          {shown.length > 1 ? (
-            <Button size="xs" variant="outline" disabled={tx.running} onClick={() => setConfirmAll(true)} data-testid="offers-cancel-all">
-              Cancel {shown.length}
-            </Button>
-          ) : null}
-        </div>
-      }
-    >
+  const toolbar = (
+    <div className="flex items-center gap-2">
+      <Segmented value={scope} onChange={setScope} size="sm" className="w-44" options={[{ value: "market", label: market?.label ?? "Market" }, { value: "all", label: "All" }]} />
+      {shown.length > 1 ? (
+        <Button size="xs" variant="outline" disabled={tx.running} onClick={() => setConfirmAll(true)} data-testid="offers-cancel-all">
+          Cancel {shown.length}
+        </Button>
+      ) : null}
+    </div>
+  );
+  const th = bare ? "px-3 py-2 text-[10px] font-medium uppercase tracking-wider text-mutedfg" : "py-1 pr-2 font-normal";
+  const td = bare ? "px-3 py-1.5" : "py-1.5 pr-2";
+
+  const body = (
+    <>
       {!wallet.address ? (
         <Empty>Connect a wallet to see your open offers.</Empty>
       ) : offers.error ? (
@@ -125,23 +128,23 @@ export function OpenOffers({
         <div className="overflow-x-auto scroll-thin" data-testid="open-offers">
           <table className="w-full min-w-[560px] text-xs">
             <thead>
-              <tr className="label text-left">
-                <th className="py-1 pr-2 font-normal">Offer</th>
-                <th className="py-1 pr-2 font-normal">Market</th>
-                <th className="py-1 pr-2 font-normal">Side</th>
-                <th className="py-1 pr-2 text-right font-normal">Price</th>
-                <th className="py-1 pr-2 text-right font-normal">Size</th>
-                <th className="py-1 pr-2 text-right font-normal">Total</th>
-                <th className="py-1 text-right font-normal" />
+              <tr className={cn("text-left", bare ? "border-b border-border" : "label")}>
+                <th className={th}>Offer</th>
+                <th className={th}>Market</th>
+                <th className={th}>Side</th>
+                <th className={cn(th, "text-right")}>Price</th>
+                <th className={cn(th, "text-right")}>Size</th>
+                <th className={cn(th, "text-right")}>Total</th>
+                <th className={cn(th, "text-right")} />
               </tr>
             </thead>
             <tbody>
               {shown.map((d) => (
-                <tr key={d.offer.id} className="border-t border-border" data-testid="offer-row" data-offer-id={d.offer.id}>
-                  <td className="py-1.5 pr-2">
+                <tr key={d.offer.id} className={cn(bare ? "border-b border-border/50 transition-colors hover:bg-white/[0.03]" : "border-t border-border")} data-testid="offer-row" data-offer-id={d.offer.id}>
+                  <td className={td}>
                     <ExplorerLink kind="offer" id={d.offer.id} network={network} />
                   </td>
-                  <td className="py-1.5 pr-2">
+                  <td className={td}>
                     {d.market ? d.market.label : <AssetLink asset={toAssetRef(d.offer.selling)} network={network} label={`${d.sellCode} > ${d.buyCode}`} />}
                     {d.market && d.market.kind !== "cash" && (d.side === "Bid" || d.market.kind === "bond") ? (
                       <span
@@ -157,15 +160,15 @@ export function OpenOffers({
                       </span>
                     ) : null}
                   </td>
-                  <td className={cn("py-1.5 pr-2 font-medium", d.side === "Ask" ? "text-red" : d.side === "Bid" ? "text-green" : "text-mutedfg")}>{d.side}</td>
-                  <td className="num py-1.5 pr-2 text-right">{fmt(d.price, 4, 4)}</td>
-                  <td className="num py-1.5 pr-2 text-right">
+                  <td className={cn(td, "font-medium", d.side === "Ask" ? "text-red" : d.side === "Bid" ? "text-green" : "text-mutedfg")}>{d.side}</td>
+                  <td className={cn(td, "num text-right")}>{fmt(d.price, 4, 4)}</td>
+                  <td className={cn(td, "num text-right")}>
                     {fmt(d.size, 2)} {d.market ? d.market.base.code : d.sellCode}
                   </td>
-                  <td className="num py-1.5 pr-2 text-right text-mutedfg">
+                  <td className={cn(td, "num text-right text-mutedfg")}>
                     {fmt(d.total, 2)} {d.market ? d.market.quote.code : d.buyCode}
                   </td>
-                  <td className="py-1.5 text-right">
+                  <td className={cn(td, "text-right")}>
                     <Button size="xs" variant="outline" disabled={tx.running} onClick={() => cancel([d])} data-testid="offer-cancel">
                       {busyId === d.offer.id ? <Spinner /> : null}
                       Cancel
@@ -203,6 +206,23 @@ export function OpenOffers({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </>
+  );
+
+  if (bare) {
+    return (
+      <div className="min-w-0">
+        <div className="flex items-center justify-between gap-3 px-3 py-1.5">
+          <span className="hidden text-[11px] text-mutedfg sm:inline">Resting offers on the SDEX. Cancelling frees the balance they lock.</span>
+          {toolbar}
+        </div>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Panel title="Open offers" subtitle="Your resting orders on the SDEX. Cancelling frees the balance they lock." right={toolbar}>
+      {body}
     </Panel>
   );
 }

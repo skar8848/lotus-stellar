@@ -107,7 +107,7 @@ export async function loadActivity(config: LotusConfig, net: NetCfg, address: st
   for (const op of ops ?? []) {
     // the event row above says more than the bare contract call of the same transaction
     if (op.type === "invoke_host_function" && vaultTx.has(op.transaction_hash)) continue;
-    const d = describeOp(op, address, names);
+    const d = describeOp(op, address, names, config.rwa.code);
     rows.push({ id: `op-${op.id}`, time: op.created_at, kind: "op", title: d.title, detail: d.detail, tx: op.transaction_hash });
   }
 

@@ -15,6 +15,7 @@ import { decodePayout, getPoolClient, type Position } from "@/lib/pool";
 import { priceAt } from "@/lib/poolGrid";
 import { fmt, fromStroops } from "@/lib/stellar";
 import { fmtAmt } from "@/lib/vault";
+import { explorerTx } from "@/lib/explorer";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import type { PoolData } from "./data";
@@ -52,37 +53,54 @@ function payoutNote(result: unknown, inst: PoolInstance): string {
 
 const priceText = (bin: number, step: number) => fmt(fromStroops(priceAt(bin, step)), 4, 4);
 
-function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; address: string; network: string; onChanged: () => void }) {
-  const { inst, positions, error, skipped } = entry;
+type Actions = {
+  running: boolean;
+  busy: string | null;
+  act: (kind: "claim" | "remove", p: Position, inst: PoolInstance) => void;
+};
+
+/**
+ * Claim / remove runners shared by every pool section: ONE status line for the whole list, so a later action in
+ * another section (or after a section disappears, e.g. a retired pool emptied by its last removal) never leaves an
+ * older success banner on screen.
+ */
+function usePoolActions(address: string, network: string, onChanged: () => void): Actions & { status: ReturnType<typeof useTx> } {
   const net = useNet();
   const wallet = useWallet();
   const acct = useAccount();
-  // simulated actions raise their own toast below (the shared hook would link a transaction that does not exist)
-  const claimTx = useTx(inst.mock ? undefined : "Claim");
-  const removeTx = useTx(inst.mock ? undefined : "Remove position");
+  const tx = useTx();
   const [busy, setBusy] = useState<string | null>(null);
-  const running = claimTx.running || removeTx.running;
-
-  const act = async (kind: "claim" | "remove", p: Position) => {
-    const runner = kind === "claim" ? claimTx : removeTx;
-    (kind === "claim" ? removeTx : claimTx).reset();
-    setBusy(`${kind}-${p.id}`);
+  const act = async (kind: "claim" | "remove", p: Position, inst: PoolInstance) => {
+    setBusy(`${inst.id}:${kind}-${p.id}`);
     try {
-      const r = await runner.run(async (onStage) => {
+      const r = await tx.run(async (onStage) => {
         const client = getPoolClient(net, inst);
         const ctx = { source: address, sign: wallet.sign, onStage };
         const res = kind === "claim" ? await client.claim(ctx, p.id) : await client.removePosition(ctx, p.id);
         onChanged();
         acct.refresh();
-        return { hash: res.hash, result: res.result, note: `position #${p.id}: ${payoutNote(res.result, inst)}` };
+        return { hash: res.hash, result: res.result, note: `${inst.label} position #${p.id} ${kind === "claim" ? "claimed" : "removed"}: ${payoutNote(res.result, inst)}` };
       });
       if (r && inst.mock) toast.success(kind === "claim" ? "Claim simulated" : "Position removal simulated", { description: "Local simulation: no transaction was sent." });
+      else if (r) {
+        const hash = r.hash;
+        toast.success(kind === "claim" ? "Claim confirmed" : "Remove position confirmed", {
+          description: `${inst.label} #${p.id}`,
+          action: hash ? { label: "View tx", onClick: () => window.open(explorerTx(hash, network), "_blank", "noopener,noreferrer") } : undefined,
+        });
+      }
     } finally {
       setBusy(null);
     }
   };
+  return { running: tx.running, busy, act, status: tx };
+}
 
-  const status = claimTx.state.stage !== "idle" ? claimTx : removeTx;
+function PoolSection({ entry, network, actions }: { entry: PoolData; network: string; actions: Actions }) {
+  const { inst, positions, error, skipped } = entry;
+  const { running, act } = actions;
+  const busy = actions.busy?.startsWith(`${inst.id}:`) ? actions.busy.slice(inst.id.length + 1) : null;
+
   const feeTier = `${fmt(inst.feeBps / 100, 2)}%`;
   const step = `${fmt(inst.binStepBps / 100, 2)}%`;
 
@@ -139,7 +157,7 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
       ) : positions.length === 0 ? (
         <Empty>
           No positions in this pool.{" "}
-          <Link href="/pools?tab=pool" className="text-primary underline-offset-2 hover:underline">
+          <Link href="/pools" className="text-primary underline-offset-2 hover:underline">
             Open one on Pools
           </Link>
           .
@@ -225,11 +243,11 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
                     </td>
                     <td className="py-2 text-right">
                       <div className="flex justify-end gap-1.5">
-                        <Button size="xs" variant="outline" disabled={running || !claimable} onClick={() => act("claim", p)} data-testid={`pool-claim-${id}`}>
+                        <Button size="xs" variant="outline" disabled={running || !claimable} onClick={() => act("claim", p, inst)} data-testid={`pool-claim-${id}`}>
                           {busy === `claim-${id}` ? <Spinner /> : null}
                           Claim
                         </Button>
-                        <Button size="xs" variant="outline" disabled={running} onClick={() => act("remove", p)} data-testid={`pool-remove-${id}`}>
+                        <Button size="xs" variant="outline" disabled={running} onClick={() => act("remove", p, inst)} data-testid={`pool-remove-${id}`}>
                           {busy === `remove-${id}` ? <Spinner /> : null}
                           Remove
                         </Button>
@@ -242,7 +260,6 @@ function PoolSection({ entry, address, network, onChanged }: { entry: PoolData; 
           </table>
         </div>
       )}
-      <ActionStatus state={status.state} network={network} onDismiss={status.reset} />
       {positions.length > 0 ? (
         <p className="mt-3 text-[11px] text-mutedfg">
           Directional positions only move one way: remaining inventory goes down, proceeds and fees go up and are never re-offered. Claim pays out proceeds and fees and keeps the position open; Remove also returns what is left.
@@ -265,8 +282,10 @@ export function PoolPositions({
   network: string;
   onChanged: () => void;
 }) {
+  const actions = usePoolActions(address, network, onChanged);
   return (
     <section className="min-w-0 space-y-4" data-testid="portfolio-pool-positions">
+      <ActionStatus state={actions.status.state} network={network} onDismiss={actions.status.reset} />
       {data === null ? (
         <Panel title="Lotus pool positions">
           <Empty>Loading...</Empty>
@@ -277,7 +296,7 @@ export function PoolPositions({
         </Panel>
       ) : (
         // a retired instance is only shown when this account still has positions there
-        data.filter((d) => d.inst.status !== "retired" || d.positions.length > 0 || !!d.error).map((d) => <PoolSection key={d.inst.id} entry={d} address={address} network={network} onChanged={onChanged} />)
+        data.filter((d) => d.inst.status !== "retired" || d.positions.length > 0 || !!d.error).map((d) => <PoolSection key={d.inst.id} entry={d} network={network} actions={actions} />)
       )}
     </section>
   );

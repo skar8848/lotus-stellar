@@ -292,7 +292,13 @@ function netChange(op: AccountOp, me: string): string {
 }
 
 /** Human label for a Horizon operation of (or touching) the account. */
-export function describeOp(op: AccountOp, me: string, contractNames: Map<string, string>): { title: string; detail?: string } {
+export function describeOp(
+  op: AccountOp,
+  me: string,
+  contractNames: Map<string, string>,
+  /** the traded base asset (LBOND): an offer selling the quote for it reads as a buy, priced in the quote */
+  baseCode?: string,
+): { title: string; detail?: string } {
   const o = op as Record<string, unknown>;
   const amt = (k: string) => fmt(str(o, k), 4);
   switch (op.type) {
@@ -321,9 +327,18 @@ export function describeOp(op: AccountOp, me: string, contractNames: Map<string,
       const price = fmt(str(o, "price"), 4, 4);
       const cancelled = Number(str(o, "amount")) === 0;
       if (cancelled) return { title: `Offer cancelled${id && id !== "0" ? ` #${id}` : ""}`, detail: `${sell} for ${buy}` };
-      const verb = op.type === "manage_buy_offer" ? `buy ${amt("amount")} ${buy} with ${sell}` : `sell ${amt("amount")} ${sell} for ${buy}`;
       const created = !id || id === "0";
-      return { title: `Offer ${created ? "created" : `updated #${id}`}: ${verb} @ ${price}`, detail: op.type === "create_passive_sell_offer" ? "passive" : undefined };
+      const head = `Offer ${created ? "created" : `updated #${id}`}`;
+      const detail = op.type === "create_passive_sell_offer" ? "passive" : undefined;
+      // a sell offer of the quote asset for the base (a bid) is shown the way the offers table shows it:
+      // "buy <base> @ <price in quote per base>", not the reciprocal selling price
+      const p = Number(str(o, "price"));
+      if (baseCode && buy === baseCode && sell !== baseCode && op.type !== "manage_buy_offer" && p > 0) {
+        const spend = Number(str(o, "amount"));
+        return { title: `${head}: buy ${fmt(spend * p, 4)} ${buy} with ${fmt(spend, 4)} ${sell} @ ${fmt(1 / p, 4, 4)} ${sell}`, detail };
+      }
+      const verb = op.type === "manage_buy_offer" ? `buy ${amt("amount")} ${buy} with ${sell}` : `sell ${amt("amount")} ${sell} for ${buy}`;
+      return { title: `${head}: ${verb} @ ${price}`, detail };
     }
     case "change_trust": {
       if (o.asset_type === "liquidity_pool_shares") return { title: "Liquidity pool trustline" };

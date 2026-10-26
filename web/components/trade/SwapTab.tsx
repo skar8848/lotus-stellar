@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ArrowDown, ChevronDown, Check } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowDownUp, ChevronDown, Check } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAccount } from "@/lib/account";
 import { useConfig, useNet } from "@/lib/config-context";
@@ -22,9 +21,11 @@ import {
   type PathRecord,
 } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
-import { AssetField, Spinner, TokenIcon, TxStatus } from "@/components/common";
+import { cn } from "@/lib/utils";
+import { Spinner, TokenIcon, TxStatus } from "@/components/common";
 import { VenueComparison } from "@/components/VenueComparison";
 import { TrustlineNotice, useAssetAccess } from "./access";
+import { ActionButton, PctSlider, SideToggle, SummaryBox, SumRow, SumSep, Warn, type Side } from "./form";
 
 function bestPath(records: PathRecord[]): PathRecord | null {
   if (records.length === 0) return null;
@@ -35,10 +36,14 @@ function TokenSelect({ value, options, onChange }: { value: AssetRef; options: A
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="secondary" className="h-11 shrink-0 gap-2 rounded-full bg-accent pl-2 pr-3 text-base hover:bg-accent/70" data-testid="token-select">
-          <TokenIcon code={value.code} size={24} /> {value.code}
-          <ChevronDown className="size-4 opacity-60" />
-        </Button>
+        <button
+          type="button"
+          className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-accent pl-1.5 pr-2 text-xs font-medium transition hover:bg-white/10"
+          data-testid="token-select"
+        >
+          <TokenIcon code={value.code} size={16} /> {value.code}
+          <ChevronDown className="size-3 opacity-60" />
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {options.map((o) => (
@@ -49,6 +54,50 @@ function TokenSelect({ value, options, onChange }: { value: AssetRef; options: A
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** Compact amount box with a token selector inside, exchange style. */
+function TokenField({
+  label,
+  right,
+  value,
+  onChange,
+  readOnly,
+  testId,
+  pill,
+  placeholder = "0.00",
+}: {
+  label: string;
+  right?: React.ReactNode;
+  value: string;
+  onChange?: (v: string) => void;
+  readOnly?: boolean;
+  testId: string;
+  pill: React.ReactNode;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs text-mutedfg">
+        <span>{label}</span>
+        {right}
+      </div>
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary py-1 pl-3 pr-1 transition-colors focus-within:border-primary">
+        <input
+          data-testid={testId}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={value}
+          readOnly={readOnly}
+          placeholder={placeholder}
+          onChange={(e) => onChange?.(e.target.value.replace(/[^0-9.]/g, ""))}
+          className={cn("num w-full min-w-0 bg-transparent py-1 text-sm outline-none placeholder:text-mutedfg/50", readOnly && "text-mutedfg")}
+        />
+        {pill}
+      </div>
+    </div>
   );
 }
 
@@ -70,6 +119,9 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
     });
   }, [market, config.rwa]);
 
+  // Buy the base with: the quote on the peg book (USDC/receipt), plain USDC otherwise (routed through the receipt
+  // book when needed). Sell the base for the same asset.
+  const counter = market.kind === "peg" ? market.quote : market.underlying;
   const [pay, setPay] = useState<AssetRef>(market.underlying);
   const [recv, setRecv] = useState<AssetRef>(market.kind === "peg" ? market.receipt : market.base);
   const [amt, setAmt] = useState("");
@@ -81,6 +133,17 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
       return null;
     }
   }, [debounced]);
+
+  const side: Side | null = assetKey(recv) === assetKey(market.base) ? "buy" : assetKey(pay) === assetKey(market.base) ? "sell" : null;
+  const setSide = (s: Side) => {
+    if (s === "buy") {
+      setPay(counter);
+      setRecv(market.base);
+    } else {
+      setPay(market.base);
+      setRecv(counter);
+    }
+  };
 
   const same = assetKey(pay) === assetKey(recv);
   const quoteFn = useCallback(() => fetchStrictSendPaths(config.horizon, pay, validAmt as string, recv), [config.horizon, pay, recv, validAmt]);
@@ -97,6 +160,13 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
 
   const payAvail = payAccess.available;
   const insufficient = validAmt !== null && payAvail !== null && Number(validAmt) > payAvail + 1e-9;
+  const pct = payAvail && payAvail > 0 && Number(amt) > 0 ? (Number(amt) / payAvail) * 100 : 0;
+  const setPct = (v: number) => {
+    if (!payAvail || payAvail <= 0) return;
+    const s = BigInt(Math.floor(payAvail * 1e7 * (v / 100)));
+    setAmt(s > 0n ? fromStroops(s) : "");
+  };
+
   const blockedBy =
     !wallet.address
       ? "Connect a wallet"
@@ -148,43 +218,61 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
     ((pay.code === config.pools[0].quote.code && recv.code === config.pools[0].base.code) ||
       (pay.code === config.pools[0].base.code && recv.code === config.pools[0].quote.code));
 
+  const locked = payAccess.state === "ok" && payAccess.balance && Number(payAccess.balance.selling_liabilities ?? 0) > 0 ? Number(payAccess.balance.selling_liabilities) : 0;
+
   return (
-    <div className="space-y-1.5" data-testid="swap-tab">
-      <AssetField
-        label="Pay"
-        testId="swap-pay-amount"
-        value={amt}
-        onChange={setAmt}
-        balance={payAvail !== null ? fmt(payAvail, 2) : wallet.address ? "-" : undefined}
-        pill={<TokenSelect value={pay} options={options.filter((o) => assetKey(o) !== assetKey(recv))} onChange={setPay} />}
-        hint={payAccess.state === "ok" && payAccess.balance && Number(payAccess.balance.selling_liabilities ?? 0) > 0 ? `${fmt(payAccess.balance.selling_liabilities, 2)} locked in offers` : undefined}
-      />
-      <div className="relative h-0">
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <button onClick={flip} aria-label="Flip" className="grid size-9 place-items-center rounded-xl border-4 border-background bg-secondary text-mutedfg transition hover:text-white">
-            <ArrowDown className="size-4" />
-          </button>
-        </div>
+    <div className="space-y-2.5" data-testid="swap-tab">
+      <SideToggle value={side} onChange={setSide} testId="swap-side" buyLabel={`Buy ${market.base.code}`} sellLabel={`Sell ${market.base.code}`} />
+
+      <div>
+        <TokenField
+          label="Pay"
+          testId="swap-pay-amount"
+          value={amt}
+          onChange={setAmt}
+          right={
+            payAvail !== null ? (
+              <button type="button" onClick={() => setPct(100)} className="text-[10px] transition hover:text-foreground" title="Use the full available balance">
+                Available: <span className="num text-foreground">{fmt(payAvail, 2)}</span>
+                {locked > 0 ? <span className="text-mutedfg"> ({fmt(locked, 2)} in offers)</span> : null}
+              </button>
+            ) : null
+          }
+          pill={<TokenSelect value={pay} options={options.filter((o) => assetKey(o) !== assetKey(recv))} onChange={setPay} />}
+        />
+        <PctSlider pct={pct} onPct={setPct} disabled={!wallet.address || !payAvail} />
       </div>
-      <AssetField
+
+      <div className="flex justify-center">
+        <button type="button" onClick={flip} aria-label="Flip" className="grid size-7 place-items-center rounded-md border border-border bg-secondary text-mutedfg transition hover:text-foreground">
+          <ArrowDownUp className="size-3.5" />
+        </button>
+      </div>
+
+      <TokenField
         label="Receive (estimated)"
         testId="swap-receive-amount"
         readOnly
         value={best ? fmt(best.destination_amount, 4) : validAmt && quote.loading ? "..." : ""}
         placeholder="0"
-        balance={recvAccess.balance ? fmt(recvAccess.balance.balance, 2) : wallet.address && recvAccess.state !== "loading" ? "-" : undefined}
+        right={recvAccess.balance ? <span className="text-[10px]">Balance: <span className="num text-foreground">{fmt(recvAccess.balance.balance, 2)}</span></span> : null}
         pill={<TokenSelect value={recv} options={options.filter((o) => assetKey(o) !== assetKey(pay))} onChange={setRecv} />}
       />
 
-      <div className="rounded-xl border border-border px-3 py-2.5 text-xs" data-testid="swap-details">
-        <Line k="Route" v={routeCodes ? routeCodes.join(" > ") : validAmt && quote.data && quote.data.length === 0 ? "no path (book empty?)" : "-"} testId="swap-route" />
-        <Line k="Effective price" v={effPrice ? `${fmt(effPrice, 4, 4)} ${pay.code}/${recv.code}` : "-"} />
-        <Line k={`Min received (${(slippageBps / 100).toFixed(2)}% slippage)`} v={destMin !== null ? `${fmt(fromStroops(destMin), 4)} ${recv.code}` : "-"} />
-        {quote.error ? <p className="mt-1 text-destructive">{quote.error}</p> : null}
-      </div>
+      <SummaryBox testId="swap-details">
+        <SumRow k="Route" v={routeCodes ? routeCodes.join(" > ") : validAmt && quote.data && quote.data.length === 0 ? "no path (book empty?)" : "-"} testId="swap-route" />
+        <SumRow k="Avg price" v={effPrice ? `${fmt(effPrice, 4, 4)} ${pay.code}/${recv.code}` : "--"} />
+        <SumRow k={`Min received`} v={destMin !== null ? `${fmt(fromStroops(destMin), 4)} ${recv.code}` : "--"} />
+        <SumSep />
+        <SumRow k="Slippage" v={`${(slippageBps / 100).toFixed(2)}%`} />
+        <SumRow k="Operation" v="pathPaymentStrictSend" />
+        <SumRow k="Network fee" v="0.0001 XLM" />
+        {quote.error ? <p className="text-[11px] text-destructive">{quote.error}</p> : null}
+      </SummaryBox>
 
       <TrustlineNotice asset={recv} access={recvAccess} verb="receive" showOk />
       {payAccess.state === "no-trustline" || payAccess.state === "unauthorized" ? <TrustlineNotice asset={pay} access={payAccess} verb="pay with" /> : null}
+      {validAmt && quote.data && quote.data.length === 0 ? <Warn tone="info">No path through the books for this size. Try a smaller amount or place a Limit order.</Warn> : null}
 
       {poolPair ? (
         <VenueComparison
@@ -198,24 +286,13 @@ export function SwapTab({ market, slippageBps, onDone }: { market: Market; slipp
         />
       ) : null}
 
-      <Button className="mt-2 h-12 w-full text-base" onClick={swap} disabled={tx.running || blockedBy !== null} data-testid="swap-submit">
-        {tx.running ? <Spinner className="size-5" /> : blockedBy ?? "Swap"}
-      </Button>
-      <p className="text-[11px] leading-relaxed text-mutedfg">
-        One transaction, one signature: Horizon finds the best path through the books (for USDC to LBOND that is USDC &gt; {market.receipt.code} &gt; LBOND). Strict send: you pay exactly what you enter; the swap fails on-chain if the fill would be under the minimum.
+      <ActionButton side={side} onClick={swap} disabled={tx.running || blockedBy !== null} blocked={blockedBy !== null && !tx.running} testId="swap-submit">
+        {tx.running ? <Spinner className="size-4" /> : blockedBy ?? (side ? `${side === "buy" ? "Buy" : "Sell"} ${market.base.code}` : "Swap")}
+      </ActionButton>
+      <p className="text-[10px] leading-relaxed text-mutedfg">
+        One transaction, one wallet signature: Horizon finds the best path through the books ({market.underlying.code} to {config.rwa.code} goes {market.underlying.code} &gt; {market.receipt.code} &gt; {config.rwa.code}). Strict send: you pay exactly what you enter; it fails on-chain if the fill would be under the minimum.
       </p>
       <TxStatus state={tx.state} network={config.network} onDismiss={tx.reset} />
-    </div>
-  );
-}
-
-function Line({ k, v, testId }: { k: string; v: string; testId?: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-0.5">
-      <span className="text-mutedfg">{k}</span>
-      <span className="num text-right" data-testid={testId}>
-        {v}
-      </span>
     </div>
   );
 }

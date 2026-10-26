@@ -98,7 +98,7 @@ export default function Landing() {
               built for them: post directional range orders, let the idle side earn Blend yield, and keep trading on the Stellar DEX
               while your portfolio works.
             </p>
-            <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4 sm:mt-14">
+            <div className="mt-10 flex w-fit flex-col items-center gap-3 sm:mt-14">
               <Link
                 href="/swap"
                 className="group inline-flex items-center gap-2.5 rounded-full bg-white px-8 py-4 text-lg font-medium text-black transition-transform hover:scale-[1.02]"
@@ -106,8 +106,8 @@ export default function Landing() {
                 Launch the app
                 <span className="transition-transform group-hover:translate-x-0.5">→</span>
               </Link>
+              <p className="text-xs text-white/30">Stellar testnet demo.</p>
             </div>
-            <p className="mt-6 text-xs text-white/30">Stellar testnet demo.</p>
           </div>
 
           {/* right: ascii video (lazy, client-only) */}

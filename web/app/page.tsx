@@ -117,6 +117,18 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ─────────────────────────────  ABOUT  ──────────────────────────── */}
+      <section id="about" className="scroll-mt-24 border-t border-white/[0.06] px-4 py-20 sm:px-10 lg:py-24">
+        <div className="mx-auto max-w-3xl text-center">
+          <span className="text-[11px] uppercase tracking-[0.34em] text-white/40">About me</span>
+          <h2 className="mt-5 font-[family-name:var(--font-audiowide)] text-3xl sm:text-4xl">Alban</h2>
+          <div className="mt-6 flex flex-col items-center gap-2 text-[15px] text-white/55 sm:text-base">
+            <p>VP DeVinci Blockchain</p>
+            <p>Data &amp; Research @ KPK</p>
+          </div>
+        </div>
+      </section>
+
       {/* ─────────────────────────────  FOOTER  ─────────────────────────── */}
       <footer className="relative overflow-hidden border-t border-white/[0.06] px-4 pt-20 sm:px-10 sm:pt-24">
         <div className="mx-auto flex max-w-7xl flex-col items-center">

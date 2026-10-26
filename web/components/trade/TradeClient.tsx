@@ -9,11 +9,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AssetLink, Empty, ExplorerLink } from "@/components/common";
 import { useAccount } from "@/lib/account";
-import { bestPrices, midPrice } from "@/lib/book";
+import { bestPrices, groupAccountTrades, midPrice } from "@/lib/book";
 import { useConfig } from "@/lib/config-context";
 import { usePolling } from "@/lib/hooks";
 import { buildMarkets, pickMarket } from "@/lib/markets";
-import { fetchCandles, fetchOffers, fetchOrderBook, fetchTrades } from "@/lib/stellar";
+import { fetchAccountTrades, fetchCandles, fetchOffers, fetchOrderBook, fetchTrades } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { DepthChart, OrderBookTable, RecentTrades } from "./BookPanels";
@@ -28,6 +28,8 @@ const TFS = [
   { label: "5m", ms: 300_000 },
   { label: "15m", ms: 900_000 },
   { label: "1h", ms: 3_600_000 },
+  { label: "1D", ms: 86_400_000 },
+  { label: "1W", ms: 604_800_000 },
 ] as const;
 
 const LG = "(min-width: 1024px)";
@@ -66,7 +68,8 @@ function useFillHeight(ref: React.RefObject<HTMLElement | null>, enabled: boolea
   return enabled ? h : null;
 }
 
-function useElementHeight(ref: React.RefObject<HTMLElement | null>): number {
+/** `remountKey`: the element is conditionally rendered, re-observe when it changes. */
+function useElementHeight(ref: React.RefObject<HTMLElement | null>, remountKey?: unknown): number {
   const [h, setH] = useState(0);
   useEffect(() => {
     const el = ref.current;
@@ -74,7 +77,7 @@ function useElementHeight(ref: React.RefObject<HTMLElement | null>): number {
     const ro = new ResizeObserver((entries) => setH(Math.floor(entries[0].contentRect.height)));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref]);
+  }, [ref, remountKey]);
   return h;
 }
 
@@ -100,7 +103,7 @@ export function TradeClient() {
   const mainRef = useRef<HTMLElement>(null);
   const fill = useFillHeight(mainRef, desktop);
   const chartBox = useRef<HTMLDivElement>(null);
-  const chartH = useElementHeight(chartBox);
+  const chartH = useElementHeight(chartBox, view);
 
   const base = market?.base ?? config.rwa;
   const quote = market?.quote ?? config.receipt;
@@ -117,23 +120,19 @@ export function TradeClient() {
   const dayCandles = usePolling(dayFn, 60000, ready);
   const offersFn = useCallback(() => (wallet.address ? fetchOffers(horizon, wallet.address) : Promise.resolve([])), [horizon, wallet.address]);
   const offers = usePolling(offersFn, 8000, !!wallet.address);
+  // the connected account's fills, one row per operation (a routed swap is one row): bottom Trade history,
+  // and its routed swaps of this market are merged into the Trades tab
+  const me = wallet.address;
+  const myTradesFn = useCallback(() => (me ? fetchAccountTrades(horizon, me, 100) : Promise.resolve([])), [horizon, me]);
+  const myTrades = usePolling(myTradesFn, 15000, !!me);
+  const fills = useMemo(() => (me && myTrades.data ? groupAccountTrades(myTrades.data, me, markets) : null), [myTrades.data, me, markets]);
+  const myRouted = useMemo(() => (fills ?? []).filter((f) => f.routed && f.marketId === market?.id), [fills, market?.id]);
 
   const bk = book.data;
   const { bid, ask } = bestPrices(bk);
   const last = trades.data?.[0]?.price ?? null;
   const mid = midPrice(bk);
-  const refPrice = mid ?? last ?? 1;
   const day = useMemo(() => dayStats(dayCandles.data, last), [dayCandles.data, last]);
-
-  // line fallback: one point per second (lightweight-charts needs strictly ascending, unique times)
-  const line = useMemo(() => {
-    const byTime = new Map<number, number>();
-    for (const t of [...(trades.data ?? [])].reverse()) {
-      const time = Math.floor(new Date(t.time).getTime() / 1000);
-      if (Number.isFinite(t.price) && Number.isFinite(time)) byTime.set(time, t.price);
-    }
-    return [...byTime.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value }));
-  }, [trades.data]);
 
   const setMarket = (id: string) => {
     const sp = new URLSearchParams(params.toString());
@@ -148,6 +147,7 @@ export function TradeClient() {
     candles.refresh();
     dayCandles.refresh();
     offers.refresh();
+    myTrades.refresh();
     acct.refresh();
   };
 
@@ -166,12 +166,29 @@ export function TradeClient() {
       markets={markets}
       market={market}
       offers={offers}
+      fills={fills}
+      fillsError={myTrades.error}
       onChanged={onDone}
       resizable={desktop}
       // keep at least ~300px for the chart row
       maxHeight={fill ? Math.max(140, fill - 48 - 300) : 600}
     />
   );
+
+  const viewTabs = (["price", "depth"] as const).map((v) => (
+    <button
+      key={v}
+      type="button"
+      onClick={() => setView(v)}
+      data-testid={`view-${v}`}
+      className={cn(
+        "h-9 shrink-0 border-b-2 px-2.5 text-xs font-medium transition-colors",
+        view === v ? "border-primary text-foreground" : "border-transparent text-mutedfg hover:text-foreground",
+      )}
+    >
+      {v === "price" ? "Chart" : "Depth"}
+    </button>
+  ));
 
   return (
     <main
@@ -212,58 +229,31 @@ export function TradeClient() {
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* chart */}
           <section className="flex min-w-0 flex-1 flex-col border-b border-border md:border-b-0 md:border-r" data-testid="chart-card">
-            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-2 py-1">
-              <div className="flex items-center gap-0.5">
-                {(["price", "depth"] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setView(v)}
-                    data-testid={`view-${v}`}
-                    className={cn(
-                      "border-b-2 px-2.5 py-1 text-xs font-medium capitalize transition-colors",
-                      view === v ? "border-primary text-foreground" : "border-transparent text-mutedfg hover:text-foreground",
-                    )}
-                  >
-                    {v === "price" ? "Chart" : "Depth"}
-                  </button>
-                ))}
-              </div>
-              {view === "price" ? (
-                <div className="flex items-center gap-0.5">
-                  {TFS.map((t, i) => (
-                    <button
-                      key={t.label}
-                      type="button"
-                      onClick={() => setTfIdx(i)}
-                      data-testid={`tf-${t.label}`}
-                      className={cn("rounded px-2 py-0.5 text-[11px] font-medium transition", tfIdx === i ? "bg-white/10 text-foreground" : "text-mutedfg hover:text-foreground")}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-[11px] text-mutedfg">
-                  {market.base.code} vs {market.quote.code}
-                </span>
-              )}
-            </div>
-            <div ref={chartBox} className="relative h-[340px] min-h-0 md:h-[420px] lg:h-auto lg:flex-1">
+            <div className="flex h-[380px] min-h-0 flex-col md:h-[460px] lg:h-auto lg:flex-1">
               {view === "price" ? (
                 <PriceChart
-                  candles={candles.data ?? []}
-                  line={line}
-                  depth={[]}
-                  refPrice={refPrice}
-                  height={Math.max(200, chartH)}
+                  className="h-full"
+                  candles={candles.data}
+                  timeframes={TFS}
+                  tfIdx={tfIdx}
+                  onTf={setTfIdx}
+                  resetKey={`${market.id}:${TFS[tfIdx].label}`}
+                  marketLabel={market.label}
                   baseCode={market.base.code}
-                  quoteCode={market.quote.code}
+                  headerLeft={viewTabs}
                 />
               ) : (
-                <div className="flex h-full flex-col justify-center px-4 py-3">
-                  <DepthChart book={bk} height={Math.max(140, chartH - 50)} baseCode={market.base.code} quoteCode={market.quote.code} />
-                </div>
+                <>
+                  <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border px-1.5">
+                    <div className="flex items-center">{viewTabs}</div>
+                    <span className="text-[11px] text-mutedfg">
+                      {market.base.code} vs {market.quote.code}
+                    </span>
+                  </div>
+                  <div ref={chartBox} className="flex min-h-0 flex-1 flex-col justify-center px-4 py-3">
+                    <DepthChart book={bk} height={Math.max(140, chartH - 30)} baseCode={market.base.code} quoteCode={market.quote.code} />
+                  </div>
+                </>
               )}
             </div>
           </section>
@@ -306,7 +296,7 @@ export function TradeClient() {
                 />
               ) : (
                 <div className="h-full overflow-auto scroll-thin">
-                  <RecentTrades trades={trades.data} horizon={horizon} baseCode={market.base.code} quoteCode={market.quote.code} network={config.network} />
+                  <RecentTrades trades={trades.data} routed={myRouted} horizon={horizon} baseCode={market.base.code} quoteCode={market.quote.code} network={config.network} />
                   {trades.error ? <p className="px-3 py-1 text-[11px] text-destructive">{trades.error}</p> : null}
                 </div>
               )}

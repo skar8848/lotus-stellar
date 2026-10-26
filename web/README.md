@@ -29,7 +29,7 @@ on `<distDir>/lock`), start a second server with its own dist dir: `NEXT_DIST_DI
 | route | what |
 | --- | --- |
 | `/` | Landing: hero with the ASCII lotus (lazy loaded WebGL, black fallback), how it works, why Stellar, footer |
-| `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), chart (candles + depth panel, or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit**, plus a "Range orders → Pools" link), bottom tabs (open orders with Cancel, trade history, balances) |
+| `/trade` | The SDEX front, laid out as a classic exchange terminal: market bar (selector `?market=LBOND-lUSDCb`, `USDC-lUSDCb`, one pair per Lotus receipt, plus `LBOND-USDC` in plain USDC; last, 24h change / high / low / volume, mid, spread, best bid / ask), TradingView-style chart (or cumulative depth), order book / trades tabs, order entry column (**Swap** / **Limit**, plus a "Range orders → Pools" link), bottom tabs (open orders with Cancel, trade history, balances) |
 | `/pools` | **New position** (Uniswap-style add-liquidity flow, see below): pair + side, range on the draggable chart over live depth, amount, then **Choose your strategy** (Lotus pool / + Blend yield / Stellar DEX / + Blend yield) and a review modal. Below it, **Your positions** across the four strategies (claim; locked until filled, then remove; View position / offer on stellar.expert). Header: **Swap on the pool** (lotus-main lite swap in a dialog, with the venue comparison) and **Advanced: two-way position** (`?pool=lbond-usdc-twoway`, the previous builder). `?tab=vault` redirects to `/portfolio#receipts` |
 | `/earn` | Redirect to `/pools` (old vault links with `?strategy=` go to `/portfolio#receipts`) |
 | `/portfolio` | Balances (available vs in offers), open offers, receipts per vault with **Redeem lUSDCb → USDC** (`#receipts`), pool positions, recent activity, USDC-equivalent summary |
@@ -49,9 +49,17 @@ full-height right column); below 1024px everything stacks. Every action is signe
 Clicking a book level fills the Limit price. Swap and Limit have a Buy / Sell toggle and a % of available balance slider.
 Range orders are not on /trade: they are placed from /pools (the order panel links there).
 
-Hover: the chart shows a crosshair with the price on the axis and a legend (time + OHLC of the candle under the cursor,
-or the trade price, plus the cursor price); over the depth bars at its right, a tooltip with the level's price, size
-and cumulative size. The Depth view shows price, size, cumulative size and cumulative total at the nearest level.
+**Chart** (`components/trade/PriceChart.tsx`): laid out like the TradingView Advanced Chart widget, drawn with
+TradingView's open-source `lightweight-charts` on our own data (Horizon `/trade_aggregations` of the selected market).
+Tenor (the reference front) embeds TradingView's `embed-widget-advanced-chart.js` with `COINBASE:ETHUSD`-type symbols;
+that widget only plots TradingView's own feeds, so it cannot show testnet SDEX assets, and Tenor ships no
+`charting_library`. Top toolbar: Chart / Depth, intervals 1m 5m 15m 1h 1D 1W (the Horizon resolutions), candles / bars /
+line / area, Vol and EMA 9 toggles, zoom, reset, full screen. Legend (always on, the bar under the crosshair or the
+last bar): market, interval, O H L C, change, volume, trade count, EMA. Volume histogram at the bottom of the pane,
+dashed crosshair with UTC labels. Bottom bar: date ranges 1D 5D 1M 1Y (each also picks an interval) and All, UTC clock,
+`%` / `log` / `auto` price-scale modes. Horizon only returns buckets that had trades, so empty buckets are drawn as
+flat grey candles at the previous close with zero volume and a "no trades" tag in the legend (`fillCandleGaps` in
+`lib/book.ts`, up to 2000 buckets back from now): no trade is invented. The Depth view shows price, size, cumulative size and cumulative total at the nearest level.
 Hovering an order-book row highlights it and every level up to the spread, with a summary (levels, size, total, average).
 The market selector menu is portalled to `<body>`, so the market bar can never clip it; the low-value stats of the
 market bar (mid, spread, 24h high / low) collapse first on narrower screens so it never scrolls at 1280px and up.
@@ -63,6 +71,15 @@ market bar (mid, spread, 24h high / low) collapse first on narrower screens so i
   next to the SDEX path, better one marked).
 - **Limit**: one `manageSellOffer` (ask or bid). Warns when the price crosses the book.
 - **Open offers**: from Horizon `/accounts/{id}/offers`, Cancel = `manageSellOffer` with amount 0 and the offer id.
+- **Trade history**: one row per user operation (`groupAccountTrades` in `lib/book.ts`). Horizon returns one trade
+  per crossed offer, so a path payment `USDC > lUSDCb > LBOND` is two trades sharing the operation id; they are
+  grouped by (operation, the account's own offer id on the trade), which merges the hops of a swap (the taker side
+  carries one synthetic offer id on every hop) and keeps each resting offer's fill on its own row. The row is shown
+  under the market of the assets actually paid and received (LBOND/USDC), side from what was received, with the
+  average price, paid, received and the route (`routed USDC → lUSDCb → LBOND`, or `direct`).
+- **Trades tab** (next to the order book): Horizon's trades of that book, plus the connected account's own routed
+  swaps of this market (tagged `routed`, average price), which never appear in the book's own trades because they
+  went through another book. Other accounts' routed swaps are not shown (that would need every account's operations).
 
 ### /pools: New position
 
@@ -308,7 +325,3 @@ web/
 - `deposit()` on the Lotus vault returns DeFindex shares, not the minted amount: the UI states the 1:1 mint from
   the amount you typed.
 - `getEvents` only scans about 10k ledgers per call, so `lib/vault.ts` pages through three 9000-ledger windows.
-
-## TODO
-
-- Bonus later: TradingView-style candles

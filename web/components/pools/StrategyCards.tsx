@@ -4,6 +4,7 @@
 // Card styling follows lotus-main's yield-venue rows (YieldVenueModal: selected = pink border + tint, disabled =
 // dimmed with the reason) and its round checkbox.
 
+import { TokenIcon } from "@/components/common";
 import { fmt, type AssetRef } from "@/lib/stellar";
 import { PROXIMITY_MIN_BINS } from "@/lib/orderRoute";
 import type { Side } from "@/lib/poolGrid";
@@ -96,7 +97,14 @@ export function StrategyCards({
                 <span className="text-sm font-semibold text-white">{TITLE[d.id]}</span>
               </div>
               <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium", d.venue === "pool" ? "bg-primary/10 text-primary" : "bg-white/5 text-mutedfg")}>
-                {d.venue === "pool" ? "Soroban" : "SDEX"}
+                {d.venue === "pool" ? (
+                  "Soroban"
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <TokenIcon code="XLM" size={12} />
+                    SDEX
+                  </span>
+                )}
               </span>
             </div>
             <p className="text-xs leading-relaxed text-mutedfg">{explain(d.id, side, base.code, quote.code, receipt.code, bins)}</p>

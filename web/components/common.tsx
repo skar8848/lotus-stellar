@@ -98,6 +98,7 @@ const TOKEN_IMG: Record<string, string> = {
   USDC: "/tokens/usdc.png",
   lUSDC: "/tokens/lusdc.svg",
   lUSDCb: "/tokens/lusdcb.svg",
+  XLM: "/tokens/xlm.svg",
 };
 
 /** Token logo with a coloured-initial fallback (USDC and the Lotus receipts have images). */

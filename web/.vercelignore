@@ -1,0 +1,6 @@
+# never upload secrets or local env (the dev signer lives in .env.local)
+.env*
+**/*.secrets.json
+node_modules
+.next*
+e2e/results

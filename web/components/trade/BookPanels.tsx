@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { bestPrices, bookRows, midPrice, type BookRow } from "@/lib/book";
+import { bestPrices, bookRows, midPrice, type BookRow, type Fill } from "@/lib/book";
 import { fetchOperationTxHash, fmt, type OrderBook, type Trade } from "@/lib/stellar";
 import { Empty, ExplorerLink } from "@/components/common";
 
@@ -241,8 +241,17 @@ export function DepthChart({ book, height = 150, baseCode = "", quoteCode = "" }
 // Recent trades with a stellar.expert link per trade (operation -> tx hash resolved lazily and cached)
 // ---------------------------------------------------------------------------
 
+type TapeRow = { id: string; time: string; price: number; size: number; buy: boolean; opId: string; routed: Fill | null };
+
+/**
+ * Recent trades of the book, newest first. Horizon lists only the trades OF THIS BOOK, so a path payment that
+ * reaches this market through another book (USDC > lUSDCb > LBOND for LBOND/USDC) is not in it: the connected
+ * account's own routed swaps of this market are merged in, tagged "routed" (other accounts' are not, that would
+ * need every account's operations).
+ */
 export function RecentTrades({
   trades,
+  routed = [],
   horizon,
   baseCode,
   quoteCode,
@@ -250,13 +259,23 @@ export function RecentTrades({
   rows = 40,
 }: {
   trades: Trade[] | null;
+  /** the connected account's routed swaps whose pay/receive pair is this market */
+  routed?: Fill[];
   horizon: string;
   baseCode: string;
   quoteCode: string;
   network: string;
   rows?: number;
 }) {
-  const shown = useMemo(() => (trades ?? []).slice(0, rows), [trades, rows]);
+  const shown = useMemo<TapeRow[]>(() => {
+    if (!trades) return [];
+    const book: TapeRow[] = trades.map((t) => ({ id: t.id, time: t.time, price: t.price, size: Number(t.baseAmount), buy: t.baseIsSeller, opId: t.opId, routed: null }));
+    const oldest = trades.length >= rows ? trades[trades.length - 1].time : "";
+    const mine: TapeRow[] = routed
+      .filter((f) => f.time >= oldest)
+      .map((f) => ({ id: `r:${f.key}`, time: f.time, price: f.price, size: f.size, buy: f.side === "Buy", opId: f.opId, routed: f }));
+    return [...book, ...mine].sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0)).slice(0, rows);
+  }, [trades, routed, rows]);
   const [hashes, setHashes] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -297,11 +316,17 @@ export function RecentTrades({
       ) : (
         <ul>
           {shown.map((t) => (
-            <li key={t.id} className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2 border-b border-border/50 px-3 py-[3px] transition-colors hover:bg-white/[0.03]">
-              <span className={cn("num", t.baseIsSeller ? "text-green" : "text-red")} title={t.baseIsSeller ? `${baseCode} bought` : `${baseCode} sold`}>
+            <li
+              key={t.id}
+              className={cn("grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2 border-b border-border/50 px-3 py-[3px] transition-colors hover:bg-white/[0.03]", t.routed && "bg-primary/[0.04]")}
+              data-testid={t.routed ? "tape-routed" : "tape-row"}
+              title={t.routed ? `Your routed swap: paid ${fmt(t.routed.paid.amount, 4)} ${t.routed.paid.asset.code}, received ${fmt(t.routed.received.amount, 4)} ${t.routed.received.asset.code} via ${t.routed.route.map((a) => a.code).join(" → ")} (average price)` : undefined}
+            >
+              <span className={cn("num flex items-center gap-1", t.buy ? "text-green" : "text-red")} title={t.routed ? undefined : t.buy ? `${baseCode} bought` : `${baseCode} sold`}>
                 {fmt(t.price, 4, 4)}
+                {t.routed ? <span className="rounded bg-primary/10 px-1 text-[9px] font-medium leading-[14px] text-primary">routed</span> : null}
               </span>
-              <span className="num text-right">{fmt(t.baseAmount, 2)}</span>
+              <span className="num text-right">{fmt(t.size, 2)}</span>
               <span className="num text-right text-mutedfg">{new Date(t.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
               <span className="w-8 text-right">
                 {hashes[t.opId] ? <ExplorerLink kind="tx" id={hashes[t.opId]} network={network} label="tx" className="text-[10px]" /> : <span className="text-mutedfg">...</span>}

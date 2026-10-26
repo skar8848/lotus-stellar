@@ -1,0 +1,13 @@
+# never upload secrets or local env
+**/*.secrets.json
+**/.env*
+!**/.env.example
+deployments/*.tmp
+# heavy / irrelevant
+**/node_modules
+target
+**/.next*
+contracts
+scripts/node_modules
+scripts/bot/logs
+web/e2e/results

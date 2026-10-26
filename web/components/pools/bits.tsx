@@ -3,7 +3,6 @@
 // Small dashboard pieces ported from lotus-main (owl/web/components/dashboard/bits.tsx): pair glyph, status badge,
 // fill bar. Presentation only.
 
-import { Badge } from "@/components/ui/badge";
 import { TokenIcon } from "@/components/common";
 import { cn } from "@/lib/utils";
 
@@ -20,18 +19,19 @@ export function PairGlyph({ base, quote, size = 26 }: { base: string; quote: str
 export type PositionStatus = "active" | "filling" | "filled";
 
 const STATUS_STYLES: Record<PositionStatus, { label: string; cls: string; dot: string; pulse: boolean }> = {
-  active: { label: "Waiting", cls: "border-primary/30 bg-primary/10 text-primary", dot: "bg-primary", pulse: false },
-  filling: { label: "Filling", cls: "border-green/30 bg-green/10 text-green", dot: "bg-green", pulse: true },
-  filled: { label: "Filled", cls: "border-line bg-white/5 text-mutedfg", dot: "bg-mutedfg", pulse: false },
+  active: { label: "Waiting", cls: "text-primary", dot: "bg-primary", pulse: false },
+  filling: { label: "Filling", cls: "text-green", dot: "bg-green", pulse: true },
+  filled: { label: "Filled", cls: "text-mutedfg", dot: "bg-mutedfg", pulse: false },
 };
 
 export function StatusBadge({ status }: { status: PositionStatus }) {
   const s = STATUS_STYLES[status];
   return (
-    <Badge variant="outline" className={cn("gap-1.5 py-1 pl-2 pr-2.5 font-medium", s.cls)}>
+    // plain label, no outline (an outlined badge overlapped the neighbouring cells)
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium", s.cls)}>
       <span className={cn("h-1.5 w-1.5 rounded-full", s.dot, s.pulse && "animate-pulse")} />
       {s.label}
-    </Badge>
+    </span>
   );
 }
 

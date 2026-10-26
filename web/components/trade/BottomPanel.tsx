@@ -3,13 +3,14 @@
 // Bottom panel of the exchange layout: Open orders (with Cancel) | Trade history (the account's fills) | Balances.
 // On desktop its height is resizable with the drag handle on top.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { useAccount } from "@/lib/account";
 import { useConfig } from "@/lib/config-context";
-import { usePolling, type Polled } from "@/lib/hooks";
+import type { Fill } from "@/lib/book";
+import type { Polled } from "@/lib/hooks";
 import type { Market } from "@/lib/markets";
-import { assetKey, fetchAccountTrades, fetchOperationTxHash, fmt, toAssetRef, type AssetRef, type HorizonOffer } from "@/lib/stellar";
+import { assetKey, fetchOperationTxHash, fmt, toAssetRef, type AssetRef, type HorizonOffer } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet";
 import { cn } from "@/lib/utils";
 import { AssetLink, Empty, ExplorerLink, TokenIcon } from "@/components/common";
@@ -24,6 +25,8 @@ export function BottomPanel({
   markets,
   market,
   offers,
+  fills,
+  fillsError,
   onChanged,
   resizable,
   maxHeight,
@@ -31,6 +34,9 @@ export function BottomPanel({
   markets: Market[];
   market: Market;
   offers: Polled<HorizonOffer[]>;
+  /** the account's trades grouped per operation (null while loading or with no wallet) */
+  fills: Fill[] | null;
+  fillsError: string | null;
   onChanged: () => void;
   /** desktop: fixed, resizable height; mobile: natural height */
   resizable: boolean;
@@ -112,7 +118,7 @@ export function BottomPanel({
       </div>
       <div className={cn("min-h-0 flex-1 scroll-thin", resizable ? "overflow-auto" : "")}>
         {tab === "orders" ? <OpenOffers markets={markets} market={market} offers={offers} onChanged={onChanged} bare /> : null}
-        {tab === "history" ? <TradeHistory markets={markets} /> : null}
+        {tab === "history" ? <TradeHistory fills={fills} error={fillsError} /> : null}
         {tab === "balances" ? <Balances offers={offers.data} /> : null}
       </div>
     </section>
@@ -124,41 +130,15 @@ const trCls = "border-b border-border/50 transition-colors hover:bg-white/[0.03]
 
 // ---------------------------------------------------------------------------
 
-function TradeHistory({ markets }: { markets: Market[] }) {
+function TradeHistory({ fills, error }: { fills: Fill[] | null; error: string | null }) {
   const { horizon, network } = useConfig();
   const wallet = useWallet();
   const me = wallet.address;
-  const fn = useCallback(() => (me ? fetchAccountTrades(horizon, me, 50) : Promise.resolve([])), [horizon, me]);
-  const trades = usePolling(fn, 15000, !!me);
   const [hashes, setHashes] = useState<Record<string, string>>({});
-
-  const rows = useMemo(
-    () =>
-      (trades.data ?? []).map((t) => {
-        // each side gives its own asset: the counter account receives the base (base_is_seller only says which side rested)
-        const boughtBaseH = t.counterAccount === me;
-        const direct = markets.find((m) => assetKey(m.base) === assetKey(t.base) && assetKey(m.quote) === assetKey(t.counter));
-        const reversed = direct ? null : markets.find((m) => assetKey(m.base) === assetKey(t.counter) && assetKey(m.quote) === assetKey(t.base));
-        if (reversed) {
-          return { t, market: reversed.label, base: t.counter, quote: t.base, side: boughtBaseH ? "Sell" : "Buy", price: t.price > 0 ? 1 / t.price : NaN, size: Number(t.counterAmount), total: Number(t.baseAmount) };
-        }
-        return {
-          t,
-          market: direct ? direct.label : `${t.base.code}/${t.counter.code}`,
-          base: t.base,
-          quote: t.counter,
-          side: boughtBaseH ? "Buy" : "Sell",
-          price: t.price,
-          size: Number(t.baseAmount),
-          total: Number(t.counterAmount),
-        };
-      }),
-    [trades.data, markets, me],
-  );
 
   useEffect(() => {
     let alive = true;
-    const ids = [...new Set(rows.map((r) => r.t.opId).filter((id) => id && !hashes[id]))].slice(0, 25);
+    const ids = [...new Set((fills ?? []).map((f) => f.opId).filter((id) => id && !hashes[id]))].slice(0, 25);
     if (ids.length === 0) return;
     Promise.all(ids.map((id) => fetchOperationTxHash(horizon, id).then((h) => [id, h] as const))).then((pairs) => {
       if (!alive) return;
@@ -173,12 +153,12 @@ function TradeHistory({ markets }: { markets: Market[] }) {
     };
     // hashes is only ever extended
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, horizon]);
+  }, [fills, horizon]);
 
   if (!me) return <Empty>Connect a wallet to see your trade history.</Empty>;
-  if (trades.error && !trades.data) return <Empty><span className="text-destructive">{trades.error}</span></Empty>;
-  if (!trades.data) return <Empty>Loading...</Empty>;
-  if (rows.length === 0)
+  if (error && !fills) return <Empty><span className="text-destructive">{error}</span></Empty>;
+  if (!fills) return <Empty>Loading...</Empty>;
+  if (fills.length === 0)
     return (
       <div className="flex flex-col items-center justify-center py-8">
         <p className="text-sm text-mutedfg">No trades yet</p>
@@ -188,32 +168,47 @@ function TradeHistory({ markets }: { markets: Market[] }) {
 
   return (
     <div className="overflow-x-auto scroll-thin" data-testid="trade-history">
-      <table className="w-full min-w-[620px] text-xs">
+      <table className="w-full min-w-[760px] text-xs">
         <thead>
           <tr className="border-b border-border">
             <th className={thCls}>Time</th>
             <th className={thCls}>Market</th>
             <th className={thCls}>Side</th>
-            <th className={cn(thCls, "text-right")}>Price</th>
-            <th className={cn(thCls, "text-right")}>Size</th>
-            <th className={cn(thCls, "text-right")}>Total</th>
+            <th className={cn(thCls, "text-right")} title="Average price of the operation, quote per base">Avg price</th>
+            <th className={cn(thCls, "text-right")}>Paid</th>
+            <th className={cn(thCls, "text-right")}>Received</th>
+            <th className={thCls}>Route</th>
             <th className={cn(thCls, "text-right")}>Tx</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.t.id} className={trCls}>
-              <td className="num px-3 py-1.5 text-mutedfg">{new Date(r.t.time).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</td>
-              <td className="px-3 py-1.5">{r.market}</td>
-              <td className={cn("px-3 py-1.5 font-medium", r.side === "Buy" ? "text-green" : "text-red")}>{r.side}</td>
-              <td className="num px-3 py-1.5 text-right">{fmt(r.price, 4, 4)}</td>
+          {fills.map((f) => (
+            <tr key={f.key} className={trCls} data-testid="history-row" data-op={f.opId} data-side={f.side} data-market={f.marketLabel} data-routed={f.routed ? "1" : "0"}>
+              <td className="num px-3 py-1.5 text-mutedfg">{new Date(f.time).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</td>
+              <td className="px-3 py-1.5">{f.marketLabel}</td>
+              <td className={cn("px-3 py-1.5 font-medium", f.side === "Buy" ? "text-green" : "text-red")}>
+                {f.side} {f.base.code}
+              </td>
               <td className="num px-3 py-1.5 text-right">
-                {fmt(r.size, 4)} {r.base.code}
+                {fmt(f.price, 4, 4)} <span className="text-mutedfg">{f.quote.code}</span>
               </td>
               <td className="num px-3 py-1.5 text-right text-mutedfg">
-                {fmt(r.total, 4)} {r.quote.code}
+                {fmt(f.paid.amount, 4)} {f.paid.asset.code}
               </td>
-              <td className="px-3 py-1.5 text-right">{hashes[r.t.opId] ? <ExplorerLink kind="tx" id={hashes[r.t.opId]} network={network} /> : <span className="text-mutedfg">...</span>}</td>
+              <td className="num px-3 py-1.5 text-right">
+                {fmt(f.received.amount, 4)} {f.received.asset.code}
+              </td>
+              <td className="px-3 py-1.5 text-mutedfg" title={f.routed ? `One path payment, ${f.tradeIds.length} offers crossed` : f.tradeIds.length > 1 ? `${f.tradeIds.length} offers crossed` : undefined}>
+                {f.routed ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="rounded bg-primary/10 px-1 py-px text-[10px] font-medium text-primary">routed</span>
+                    {f.route.map((a) => a.code).join(" → ")}
+                  </span>
+                ) : (
+                  "direct"
+                )}
+              </td>
+              <td className="px-3 py-1.5 text-right">{hashes[f.opId] ? <ExplorerLink kind="tx" id={hashes[f.opId]} network={network} /> : <span className="text-mutedfg">...</span>}</td>
             </tr>
           ))}
         </tbody>

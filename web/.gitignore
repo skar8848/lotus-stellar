@@ -51,3 +51,4 @@ next-env.d.ts
 
 # alternate dist dirs (NEXT_DIST_DIR)
 /.next-*/
+/deployments/

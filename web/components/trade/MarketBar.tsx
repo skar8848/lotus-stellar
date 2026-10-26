@@ -109,19 +109,14 @@ export function MarketSelector({ markets, market, onSelect }: { markets: Market[
                     onSelect(m.id);
                     setOpen(false);
                   }}
-                  className={cn("flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary", m.id === market.id && "bg-secondary")}
+                  className={cn("flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-secondary", m.id === market.id && "bg-secondary")}
                 >
-                  <span className="mt-0.5">
-                    <PairIcons m={m} size={20} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{m.label}</span>
-                      <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", t.cls)} title={t.title(m)}>
-                        {t.label}
-                      </span>
+                  <PairIcons m={m} size={20} />
+                  <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{m.label}</span>
+                    <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", t.cls)} title={t.title(m)}>
+                      {t.label}
                     </span>
-                    <span className="mt-0.5 block text-[11px] leading-snug text-mutedfg">{m.blurb}</span>
                   </span>
                 </button>
               );

@@ -152,6 +152,9 @@ export type Trade = {
   counterAccount: string;
   /** Horizon operation id (resolve to a tx hash with fetchOperationTxHash). */
   opId: string;
+  /** offer ids of both sides (a taker's side is a synthetic id shared by every hop of its operation) */
+  baseOfferId?: string;
+  counterOfferId?: string;
 };
 
 export type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number; trades: number };
@@ -246,6 +249,8 @@ type RawTrade = {
   base_is_seller: boolean;
   base_account?: string;
   counter_account?: string;
+  base_offer_id?: string;
+  counter_offer_id?: string;
   price: { n: string; d: string };
   _links?: { operation?: { href?: string } };
 };
@@ -264,6 +269,8 @@ function mapTrade(t: RawTrade): Trade {
     baseAccount: t.base_account ?? "",
     counterAccount: t.counter_account ?? "",
     opId,
+    baseOfferId: t.base_offer_id,
+    counterOfferId: t.counter_offer_id,
   };
 }
 

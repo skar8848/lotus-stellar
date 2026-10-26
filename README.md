@@ -98,7 +98,7 @@ Three live testnet instances, all LBOND/USDC:
 
 - **Trade**: the front of the SDEX. Market selector, candles and depth, order book, recent trades; Swap (path payment), Limit, and Range (a ladder of up to 50 offers in one transaction, one-way sell, one-way buy or two-sided band); open offers with Cancel.
 - **Pools**: the Lotus pool (instance picker, depth by bin, range builder for directional and two-way positions, claim and remove, pool swap with a venue comparison against the SDEX) and the vault tab (strategy cards, deposit and redeem, yield explainer).
-- **Portfolio**: balances (available versus committed to offers), open offers, receipts per vault, pool positions, activity, with explorer links on every address, asset and transaction.
+- **Portfolio**: pool positions, Lotus receipts with the yield already paid by the keeper, open offers, then balances (available versus committed to offers).
 
 Any Stellar Wallets Kit wallet works (Freighter, xBull, Albedo, Lobstr, Hana). A dev-only secret-key signer, gated by an environment variable, was used for headless testing. See [web/README.md](web/README.md).
 
@@ -111,7 +111,7 @@ Measured runs of the bot (testnet, 25 October 2026):
 - A depeg of the receipt to 0.985 was restored by the arbitrageur in 10 to 12 seconds on both vault deployments. The arbitrageur's profit in those scenarios is a transfer from the account that created the dislocation, not revenue.
 - A cross-venue dislocation between the pool and the SDEX was closed in 26 seconds.
 - The scripted demo run lasts about 167 seconds with 25 flow trades and ends with a keeper distribution that minted real interest to 6 holders.
-- Two 10-minute runs: 0 failed transactions, 0 HTTP 429, about 0.52 XLM spent in total.
+- Two 10-minute runs: 0 failed transactions and 0 HTTP 429 inside those windows, about 0.52 XLM spent in total. Over the accounts' whole history, `mm_a` has 11 failed transactions out of about 1,300 (underfunded, offer not found); `mm_b` and `arb` have none.
 
 ## Why there is real yield on testnet (v2), and why there was none before
 
@@ -121,7 +121,7 @@ The Blend testnet pool is real and pays real supply interest. The DeFindex testn
 
 Addresses live in `deployments/`: `testnet.contract.json` (active vault), `testnet.strategies.json` (every strategy), `testnet.pool.json` (pool instances), `testnet.classic.json` (RWA, demo accounts, offers), `testnet.bot.json` (bot accounts). If this README and those files disagree, the files win.
 
-| | v2 `usdc-defindex-blend` (active, live yield) | v1 `usdc-defindex-idle` (kept for comparison) |
+| | v2 `usdc-defindex-blend` (active, live yield) | v1 `usdc-defindex-idle` (never lent: the instant buffer) |
 |---|---|---|
 | `lotus_vault` | [`CCCZ6XUD…2QKG`](https://stellar.expert/explorer/testnet/contract/CCCZ6XUDCWTOKZS6AYNECY3QPOFBICGMBBZXM63U4WZQD4EBFYFW2QKG) | [`CA5JHSNN…AHG6`](https://stellar.expert/explorer/testnet/contract/CA5JHSNNGRX3QLLNRLOTDCXYGAYVC3ZRHXX6IWXQAD6YLILZ7TL2AHG6) |
 | Receipt asset (classic, SAC admin = the contract) | `lUSDCb`, issuer `GC7QBZD2LMPZZ3BT4ZLKPYUR23GJKT47BLYJKMXUY523M7HMUGT64TVO` | `lUSDC`, issuer `GBBBCE5XIN3KPPNETITZF4ZEC6NG4MZZ3I2CYIQGGGY4GN4DJO73GDL6` |
@@ -130,7 +130,7 @@ Addresses live in `deployments/`: `testnet.contract.json` (active vault), `testn
 
 Shared: Blend testnet USDC `USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56`, Blend pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`, LBOND issuer `GCMNI332OEZL2AVBKJVDZ2IPREWMEYRENGFFVEGXS4JVXUWJEIAT5EQF`. `deployments/switch-strategy.sh v1|v2|status` swaps the active vault.
 
-Verification: v2 end to end with real interest (deposits of 100, 50 and 100 USDC fully invested, a `distribute` that minted real interest pro rata, a redeem of 50 `lUSDCb` paying exactly 50 USDC through the Blend withdrawal), v1 smoke test including an over-cap distribution rejected with `ExceedsCap`, pool smoke tests on every instance, a path payment on v2 that delivered 152.49 LBOND, and `blocked_taker` rejected with `op_not_authorized`. Transaction hashes are in the `deployments/*.json` files.
+Verification: v2 end to end with real interest (deposits of 100, 50 and 100 USDC fully invested, a `distribute` that minted real interest pro rata, a redeem of 50 `lUSDCb` paying exactly 50 USDC through the Blend withdrawal), v1 smoke test including an over-cap distribution rejected with `ExceedsCap` (rejected by the contract in simulation, so no failed transaction exists on-chain), pool smoke tests on every instance, a path payment on v2 that delivered 152.49 LBOND, and `blocked_taker` rejected with `op_not_authorized`. Transaction hashes are in the `deployments/*.json` files.
 
 Measured costs: Soroban calls on testnet, including those that touch Blend, cost 0.0015 to 0.14 XLM. A withdraw from the DeFindex Blend strategy used about 3.5M CPU instructions of 400M and 13 of 200 ledger entries. Mainnet cost is unmeasured. (An earlier single measurement of about 100 XLM per Blend call did not reproduce and is retracted.)
 
@@ -190,14 +190,17 @@ Stated up front, because testnet is not mainnet.
 - **Footprint race on the vault-backed pool.** The vault's idle balance can change by a stroop between simulation and inclusion, which fails the transaction with `ExceededLimit`. The app re-simulates and resends once. This was unit-tested but not exercised live.
 - **Keeper and vault liveness.** Distribution needs a keeper; the cap is on-chain so it can only delay or omit. Redemption at par depends on Blend having liquidity; if the pool is fully utilized redemption waits and the peg book trades at a discount.
 - **Junk bins.** Anyone can open tiny positions in many bins to lengthen swaps; mitigated by a minimum size per bin and `max_bins_per_swap`, not eliminated.
+- **Sell-side denial of service on the pool (found in review, not fixed on-chain).** `remove_position` rounds the leaver's Bid inventory down, so a withdrawal can leave a few stroops in a bin. A Bid bin with less than one fillable unit is skipped by a sell but still counts toward `max_bins_per_swap` (100), and dust is only swept during a fill. An attacker who leaves such dust in the top 100 Bid bins (about 300 transactions, almost no capital) makes every sell fail with `NoLiquidity`, and can make it permanent by keeping a large position that turns new deposits into `BinDust`. Funds are not at risk: `remove_position` still works, buys and the SDEX are unaffected, and a fresh instance recovers. Fix (about 10 lines): when a removal leaves a Bid bin below the minimum per bin, fold the remainder into that bin's fees for the remaining LPs (same unit, no value transfer) and empty the bin. The contract has no upgrade path, so the live instances were not redeployed during the hackathon.
 - **No pause, upgrade path or audit.** The pool admin can only change `max_bins_per_swap`. The receipt issuers are not locked on testnet (on mainnet the issuer would be locked after `set_admin`, so the contract is the only minter).
-- **Older instance.** The `defindex` pool instance runs an earlier build of the same source (stages A to C) and holds vault shares, so it was not redeployed; `idle` was redeployed from the final build on 26 October 2026 (the earlier one is kept under `retired_pools`).
+- **Reproducible builds.** Only the `idle` pool instance and the vault are reproducible from this repository: building HEAD with Rust 1.98.1 and stellar CLI 28.1.0 gives the deployed hashes (`caf426…` for the pool, `adfd23…` for the vault). The `defindex` and `twoway` instances run earlier builds whose exact source was not kept in git; they hold live positions (vault shares on `defindex`), so they were not redeployed. A LP cannot verify their code today. The toolchain is not pinned (`rust-toolchain.toml` is missing), and another Rust version gives a slightly different wasm.
 - **Two-way bid side** was tested in unit tests, not live in the UI.
 - **Receipt issuer trust (testnet).** The `lUSDCb` issuer key is not locked, so on testnet the team could print receipts classically and redeem them against the vault: a trust assumption on us until the issuer is locked after `set_admin` (mainnet requirement).
 - **Vault edge cases.** `redeem` burns the full amount and pays what DeFindex returns (no revert if the vault pays a stroop less), and `deposit` mints 1:1 even if the vault were under-backed after a Blend loss (a new depositor would then recapitalise earlier holders). Neither has occurred on testnet; both are fixes for the next contract version (revert on shortfall, pro-rata mint when under-backed).
 - **Pool details.** Sealed bin generations are not TTL-bumped by `claim`/`remove_position`, so a position in a bin left untouched for about 30 days needs a state restore before it can claim. The pool trusts DeFindex to deposit the full amount (true for a single-asset vault). The admin can lower `max_bins_per_swap`, which degrades swap depth but cannot move funds.
-- **Faucet.** Its limits (one claim per address, per-IP rate) are soft on a serverless host; it only hands out testnet tokens.
-- **Locked orders are a UI rule.** Orders created with a yield strategy cannot be cancelled from the app until filled, but SDEX offers belong to the user's account and another wallet could still cancel them.
+- **Faucet and the LBOND issuer key.** The faucet runs on Vercel with three server-side keys, one of them the LBOND issuer itself, which can freeze, revoke and claw back (including the pool's trustline). It authorizes the LBOND trustline of any address that asks, so on testnet the faucet stands in for the issuer's KYC desk: the point shown is that the protocol enforces authorization (`blocked_taker` fails with `op_not_authorized`), not that anyone checks identity. On mainnet the issuer would be multisig and authorization would go through the issuer's compliance service, with no mint or clawback power on any web server. Its limits (one claim per address, per-IP rate kept in memory per server instance) are soft.
+- **Locked orders are a UI rule.** A product choice for the MVP, to avoid partial exits in the interface: pool positions and orders created with a yield strategy cannot be removed or cancelled from the app until filled ("Early redemption · soon"). The contracts never hold funds hostage: `remove_position` works at any time from the CLI, the SDK or the MCP server, and SDEX offers belong to the user's account, so any wallet can cancel them.
+- **Keeper pays classic accounts only.** It lists receipt holders through Horizon (`/accounts?asset=`), so receipts held by a Soroban contract or a classic AMM pool receive nothing; their share goes to the other holders. A distribution to the issuer address would bypass the cap (its balance reads as `i64::MAX`), and the SAC rejects the mint; the next version refuses it explicitly.
+- **Team-run everything.** No external user is proven yet. The trading volume is team-run market makers (see above), the keeper and the issuers are team keys, the DeFindex vault was created and seeded by the team (Lotus holds about 74 percent of its shares) and its manager, rebalance and emergency roles are one team key. LBOND is simulated: its fair value is a model in the bot (`scripts/bot/lib/nav.mjs`).
 - Yield accrues on the USDC leg only. Mainnet cost and rates are unmeasured.
 
 ## Roadmap

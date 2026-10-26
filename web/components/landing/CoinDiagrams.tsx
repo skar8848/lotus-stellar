@@ -97,27 +97,28 @@ export function OrderDiagram({ base, quote }: { base: string; quote: string }) {
 
 const VENUES = ["/tokens/lotus-pool.svg", "/tokens/xlm.svg"];
 
-/** idle receipt: USDC locked in the Lotus DeFindex vault, receipt minted 1:1, used to provide liquidity, redeemed 1:1 */
+/** buffer receipt: USDC kept unlent in the Lotus DeFindex vault, receipt minted 1:1, for near-price orders and working capital */
 export function ReceiptDiagram({ quote, idle }: { quote: string; idle: string }) {
   const id = "coin-arrow-idle";
   return (
     <Svg
       id={id}
       h={214}
-      label={`${quote} is locked in the Lotus DeFindex vault, which mints ${idle} 1:1; ${idle} provides liquidity on the Lotus pool or the Stellar DEX, and redeems 1:1 for ${quote}.`}
+      label={`${quote} sits unlent in the Lotus DeFindex vault, which mints ${idle} 1:1. ${idle} is an instant buffer for orders close to the price and for working capital, and redeems 1:1 for ${quote}.`}
     >
       <Edge id={id} optional d="M525 40 V20 H75 V38" />
-      <Label x={300} y={13} text={`redeem 1:1 for ${quote}`} />
+      <Label x={300} y={13} text={`redeem 1:1 for ${quote}, instantly`} />
       <Edge id={id} d="M152 72 H222" />
       <Label x={187} y={62} text="deposit" />
       <Edge id={id} d="M377 72 H447" />
       <Label x={412} y={62} text="mint 1:1" />
-      <Edge id={id} d="M525 104 V150" />
-      <Label x={515} y={132} text="provide liquidity" anchor="end" />
+      <Edge id={id} d="M525 104 V128 H300 V150" />
+      <Edge id={id} d="M525 128 V150" />
       <Node x={0} y={42} w={150} logo="/tokens/usdc.png" title={quote} sub="your wallet" />
-      <Node x={225} y={42} w={150} title="Lotus vault" sub="locked in DeFindex" accent />
-      <Node x={450} y={42} w={150} logo="/tokens/lusdc.svg" title={idle} sub="1:1 receipt" accent />
-      <Node x={400} y={152} w={200} logo={VENUES} title="Lotus or SDEX" sub="your range orders" />
+      <Node x={225} y={42} w={150} title="Lotus vault" sub="unlent in DeFindex" accent />
+      <Node x={450} y={42} w={150} logo="/tokens/lusdc.svg" title={idle} sub="instant buffer" accent />
+      <Node x={210} y={152} w={180} title="Near-price orders" sub="about to fill" />
+      <Node x={420} y={152} w={180} title="Working capital" sub="always withdrawable" />
     </Svg>
   );
 }
